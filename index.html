@@ -356,6 +356,66 @@ html, body { height:100%; background:var(--bg); font-family:'Noto Sans TC',syste
 .menu-arrow { font-size:24px; color:var(--text3); flex-shrink:0; }
 
 /* Misc */
+/* ── PENDING REQUESTS TICKER ── */
+.pending-ticker {
+  padding:14px 16px 10px;
+  background:linear-gradient(135deg, rgba(27,79,138,0.06) 0%, rgba(27,79,138,0.02) 100%);
+  border-bottom:1px solid var(--border);
+}
+.pending-ticker-header {
+  display:flex; justify-content:space-between; align-items:center;
+  margin-bottom:10px;
+}
+.pending-ticker-header h3 {
+  font-size:15px; font-weight:700; color:var(--text);
+  display:flex; align-items:center; gap:6px;
+}
+.pending-ticker-header .badge {
+  background:var(--red); color:white; font-size:11px; font-weight:700;
+  min-width:20px; height:20px; border-radius:10px;
+  display:inline-flex; align-items:center; justify-content:center;
+  padding:0 6px; animation:badgePulse 2s infinite;
+}
+@keyframes badgePulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.1)} }
+.pending-ticker-scroll {
+  display:flex; gap:10px; overflow-x:auto; overflow-y:hidden;
+  scroll-snap-type:x mandatory; -webkit-overflow-scrolling:touch;
+  padding-bottom:6px;
+}
+.pending-ticker-scroll::-webkit-scrollbar { height:3px; }
+.pending-ticker-scroll::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+.pending-card {
+  flex:0 0 260px; scroll-snap-align:start;
+  background:var(--card); border:1px solid var(--border);
+  border-radius:12px; padding:14px;
+  position:relative; overflow:hidden;
+  transition:transform 0.15s;
+}
+.pending-card:active { transform:scale(0.97); }
+.pending-card::before {
+  content:''; position:absolute; left:0; top:0; bottom:0;
+  width:4px; border-radius:12px 0 0 12px;
+}
+.pending-card.type-point::before { background:#E6A040; }
+.pending-card.type-pickup::before { background:#5BAB6E; }
+.pending-card .pc-type {
+  font-size:11px; font-weight:700; color:white;
+  padding:2px 8px; border-radius:4px; display:inline-block;
+}
+.pending-card.type-point .pc-type { background:#E6A040; }
+.pending-card.type-pickup .pc-type { background:#5BAB6E; }
+.pending-card .pc-member { font-size:12px; color:var(--accent); font-weight:600; font-family:monospace; margin-left:6px; }
+.pending-card .pc-title { font-size:14px; font-weight:600; color:var(--text); margin:8px 0 4px; line-height:1.4; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.pending-card .pc-details { font-size:11px; color:var(--text3); line-height:1.5; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; white-space:pre-line; }
+.pending-card .pc-time { font-size:10px; color:var(--text3); margin-top:8px; }
+.pending-card .pc-btn {
+  margin-top:10px; width:100%;
+  background:var(--green); border:none; color:white;
+  font-size:12px; font-weight:700; padding:8px 0;
+  border-radius:8px; cursor:pointer; font-family:inherit;
+}
+.pending-card .pc-btn:active { opacity:0.85; }
+
 .section-label { font-size:14px; letter-spacing:0.5px; color:var(--text2); margin-bottom:10px; font-weight:700; }
 .divider { height:1px; background:var(--border); margin:4px 0; }
 input[type=file] { display:none; }
@@ -430,7 +490,19 @@ input[type=file] { display:none; }
       <button onclick="doLogout()" style="background:rgba(255,255,255,0.15);border:none;color:white;font-size:12px;padding:5px 10px;border-radius:6px;cursor:pointer">登出</button>
     </div>
   </div>
-  <div style="flex:1;padding:20px;display:flex;flex-direction:column;gap:14px">
+  <div style="flex:1;overflow-y:auto">
+    <!-- ── Pending 點貨/自取 requests (pinned top) ── -->
+    <div class="pending-ticker" id="pending-ticker" style="display:none">
+      <div class="pending-ticker-header">
+        <h3>📋 待處理申請 <span class="badge" id="pending-badge">0</span></h3>
+        <button onclick="showScreen('screen-pointlist');renderPointlistFromDB()" style="background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;font-weight:600">查看全部 ›</button>
+      </div>
+      <div class="pending-ticker-scroll" id="pending-ticker-scroll">
+        <!-- cards injected by JS -->
+      </div>
+    </div>
+
+    <div style="padding:20px;display:flex;flex-direction:column;gap:14px">
     <!-- Stats row -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center">
@@ -491,6 +563,7 @@ input[type=file] { display:none; }
       </div>
       <span class="menu-arrow">›</span>
     </button>
+    </div>
   </div>
 </div>
 
@@ -1269,6 +1342,7 @@ function showScreen(id) {
   if(id === 'screen-tasks') loadTasks();
   if(id === 'screen-home') {
     document.getElementById('home-today').textContent = todayCount;
+    loadPendingTicker();
   }
 }
 
@@ -1842,7 +1916,52 @@ async function completeTask(taskId) {
 
     showToast('任務已完成 ✅（'+currentStaffName+'）','green');
     loadTasks();
+    loadPendingTicker();
+    renderPointlistFromDB();
   } catch(e) { console.error(e); }
+}
+
+// ── Pending 點貨/自取 Ticker on Home ──────────────
+async function loadPendingTicker() {
+  var ticker = document.getElementById('pending-ticker');
+  var scroll = document.getElementById('pending-ticker-scroll');
+  var badge = document.getElementById('pending-badge');
+  if(!ticker || !scroll || !sb) return;
+  try {
+    const { data, error } = await sb
+      .from('tasks')
+      .select('*')
+      .in('task_type', ['point','pickup'])
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+    if(error || !data || data.length === 0) {
+      ticker.style.display = 'none';
+      return;
+    }
+    ticker.style.display = '';
+    badge.textContent = data.length;
+    // Also update home ship count with all pending ship tasks
+    try {
+      const shipRes = await sb.from('tasks').select('id').eq('task_type','ship').eq('status','pending');
+      if(shipRes.data) document.getElementById('home-ship').textContent = shipRes.data.length;
+    } catch(e){}
+
+    var typeIcon = {point:'🔍 點貨', pickup:'🏪 自取'};
+    var typeClass = {point:'type-point', pickup:'type-pickup'};
+    scroll.innerHTML = data.map(function(t){
+      var date = t.created_at ? new Date(t.created_at).toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+      return '<div class="pending-card '+(typeClass[t.task_type]||'')+'">'
+        + '<div style="display:flex;align-items:center">'
+        + '<span class="pc-type">'+(typeIcon[t.task_type]||'📋')+' </span>'
+        + '<span class="pc-member">'+(t.member_code||'—')+'</span>'
+        + '</div>'
+        + '<div class="pc-title">'+(t.title||'—')+'</div>'
+        + (t.details ? '<div class="pc-details">'+t.details+'</div>' : '')
+        + '<div class="pc-time">⏰ '+date+'</div>'
+        + '<button class="pc-btn" onclick="event.stopPropagation();completeTask('+t.id+')">✓ 完成處理</button>'
+        + '</div>';
+    }).join('');
+  } catch(e) { console.error('loadPendingTicker error:',e); }
 }
 
 // ── Supabase: 出貨訂單讀 tasks 表 ────────────────
