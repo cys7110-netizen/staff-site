@@ -30,8 +30,9 @@ html, body { height:100%; background:var(--bg); font-family:'Noto Sans TC',syste
   display:flex;
   align-items:center;
   justify-content:space-between;
-  padding:14px 16px;
-  min-height:60px;
+  padding:18px 16px;
+  padding-top:max(18px, env(safe-area-inset-top));
+  min-height:68px;
   flex-shrink:0;
 }
 .topbar-title { font-size:15px; font-weight:700; letter-spacing:0.5px; }
@@ -497,6 +498,18 @@ input[type=file] { display:none; }
     </div>
   </div>
   <div style="flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px">
+
+    <!-- 頂部統計框 -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div onclick="showScreen('screen-pointlist');renderPointlistFromDB()" style="background:var(--card);border:1.5px solid var(--border);border-radius:12px;padding:18px 12px;text-align:center;cursor:pointer">
+        <div style="font-size:30px;font-weight:800;color:var(--red)" id="home-pending">0</div>
+        <div style="font-size:12px;color:var(--text3);margin-top:4px;font-weight:500">📋 待處理申請</div>
+      </div>
+      <div onclick="showScreen('screen-shiplist')" style="background:var(--card);border:1.5px solid var(--border);border-radius:12px;padding:18px 12px;text-align:center;cursor:pointer">
+        <div style="font-size:30px;font-weight:800;color:var(--green)" id="home-ship">0</div>
+        <div style="font-size:12px;color:var(--text3);margin-top:4px;font-weight:500">✈️ 今日出貨申請</div>
+      </div>
+    </div>
 
     <!-- Menu buttons：5 個功能 -->
     <button class="menu-btn" onclick="showScreen('screen-pointlist');renderPointlistFromDB()" style="position:relative">
@@ -2365,26 +2378,41 @@ async function completeTask(taskId) {
   } catch(e) { console.error(e); }
 }
 
-// ── Pending 點貨/自取 Badge Count ──────────────
+// ── 首頁統計 + Badge 更新 ──────────────
 async function loadPendingTicker() {
   var badge = document.getElementById('pending-badge');
-  if(!badge || !sb) {
-    if(badge) badge.textContent = '0';
+  var pendingBox = document.getElementById('home-pending');
+  var shipBox = document.getElementById('home-ship');
+
+  if(!sb) {
+    if(badge) { badge.textContent = '0'; badge.style.display = 'none'; }
+    if(pendingBox) pendingBox.textContent = '0';
+    if(shipBox) shipBox.textContent = '0';
     return;
   }
   try {
+    // 查全部 pending tasks
     var { data, error } = await sb
       .from('tasks')
       .select('id, task_type')
-      .eq('status', 'pending')
-      .in('task_type', ['point','pickup']);
-    if(error) { badge.textContent = '!'; return; }
-    var count = (data || []).length;
-    badge.textContent = count;
-    badge.style.display = count > 0 ? 'inline-flex' : 'none';
+      .eq('status', 'pending');
+    if(error) { if(badge) badge.textContent = '!'; return; }
+
+    var tasks = data || [];
+    var pendingCount = tasks.filter(function(t){ return t.task_type === 'point' || t.task_type === 'pickup'; }).length;
+    var shipCount = tasks.filter(function(t){ return t.task_type === 'ship'; }).length;
+
+    // 更新按鈕 badge
+    if(badge) {
+      badge.textContent = pendingCount;
+      badge.style.display = pendingCount > 0 ? 'inline-flex' : 'none';
+    }
+    // 更新頂部統計框
+    if(pendingBox) pendingBox.textContent = pendingCount;
+    if(shipBox) shipBox.textContent = shipCount;
   } catch(e) {
     console.error('loadPendingTicker error:', e);
-    badge.textContent = '!';
+    if(badge) badge.textContent = '!';
   }
 }
 
