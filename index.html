@@ -439,6 +439,9 @@ input[type=file] { display:none; }
   background:rgba(220,60,60,0.08);
   border-color:rgba(200,50,50,0.3); color:var(--red);
 }
+@keyframes batchFadeIn { from{opacity:0;transform:translateY(-10px)} to{opacity:1;transform:translateY(0)} }
+.batch-on { background:var(--accent) !important; }
+.batch-on > span { transform:translateX(18px) !important; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/quagga@0.12.1/dist/quagga.min.js"></script>
@@ -495,19 +498,7 @@ input[type=file] { display:none; }
   </div>
   <div style="flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px">
 
-    <!-- Stats row: 待處理 + 出貨申請 -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div onclick="showScreen('screen-tasks')" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center;cursor:pointer;position:relative">
-        <div style="font-size:28px;font-weight:800;color:var(--red)" id="home-pending">0</div>
-        <div style="font-size:12px;color:var(--text3);margin-top:2px">📋 待處理申請</div>
-      </div>
-      <div onclick="showScreen('screen-shiplist')" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center;cursor:pointer">
-        <div style="font-size:28px;font-weight:800;color:var(--green)" id="home-ship">0</div>
-        <div style="font-size:12px;color:var(--text3);margin-top:2px">✈️ 出貨申請</div>
-      </div>
-    </div>
-
-    <!-- 待處理點貨/自取 橫向滑動 -->
+    <!-- 待辦事項：點貨/自取 橫向滑動 -->
     <div id="pending-section">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
         <div style="font-size:15px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:6px">📋 客人待處理申請 <span id="pending-badge" style="background:var(--red);color:white;font-size:11px;font-weight:700;min-width:20px;height:20px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;padding:0 6px">0</span></div>
@@ -518,19 +509,19 @@ input[type=file] { display:none; }
       </div>
     </div>
 
-    <!-- Menu buttons -->
+    <!-- Menu buttons：4 個功能 -->
     <button class="menu-btn" onclick="showScreen('screen-scan')">
       <span class="menu-icon">📷</span>
       <div class="menu-label">
-        <div class="menu-title">入庫掃件</div>
-        <div class="menu-sub">掃描包裹條碼 · 入庫確認</div>
+        <div class="menu-title">掃碼入庫</div>
+        <div class="menu-sub">掃描包裹條碼 · 拍照 · 入庫確認</div>
       </div>
       <span class="menu-arrow">›</span>
     </button>
     <button class="menu-btn" onclick="showScreen('screen-shiplist')">
       <span class="menu-icon">✈️</span>
       <div class="menu-label">
-        <div class="menu-title">當日出貨申請</div>
+        <div class="menu-title">出貨申請</div>
         <div class="menu-sub">今日出貨申請客人明細</div>
       </div>
       <span class="menu-arrow">›</span>
@@ -543,30 +534,16 @@ input[type=file] { display:none; }
       </div>
       <span class="menu-arrow">›</span>
     </button>
-    <button class="menu-btn" onclick="showScreen('screen-pointlist')">
-      <span class="menu-icon">✅</span>
-      <div class="menu-label">
-        <div class="menu-title">點貨 ／ 自取申請</div>
-        <div class="menu-sub">確認客人點貨 · 自取申請</div>
-      </div>
-      <span class="menu-arrow">›</span>
-    </button>
-    <button class="menu-btn" onclick="showScreen('screen-unclaimed')">
+    <button class="menu-btn" onclick="showScreen('screen-unclaimed')" style="position:relative">
       <span class="menu-icon">❓</span>
       <div class="menu-label">
         <div class="menu-title">無人包裹</div>
         <div class="menu-sub">無代號 · 無法對應的包裹</div>
       </div>
+      <span id="home-unclaimed-badge" style="position:absolute;top:12px;right:40px;background:var(--red);color:white;font-size:11px;font-weight:700;min-width:20px;height:20px;border-radius:10px;display:none;align-items:center;justify-content:center;padding:0 6px">0</span>
       <span class="menu-arrow">›</span>
     </button>
-    <button class="menu-btn" onclick="showScreen('screen-tasks')" style="border-left:3px solid var(--accent)">
-      <span class="menu-icon">📋</span>
-      <div class="menu-label">
-        <div class="menu-title">待辦系統</div>
-        <div class="menu-sub">客人申請 · 出貨/點貨/自取</div>
-      </div>
-      <span class="menu-arrow">›</span>
-    </button>
+
   </div>
 </div>
 
@@ -579,6 +556,23 @@ input[type=file] { display:none; }
       <div class="topbar-sub" id="scan-date"></div>
     </div>
     <div class="topbar-badge" id="today-count">今日 0 件</div>
+  </div>
+
+  <!-- 批量模式開關 -->
+  <div style="padding:8px 20px 0;display:flex;justify-content:space-between;align-items:center">
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text2);font-weight:600" onclick="toggleBatchMode()">
+      <span id="batch-toggle" style="width:42px;height:24px;background:var(--border);border-radius:12px;position:relative;display:inline-block;transition:background 0.2s;flex-shrink:0">
+        <span style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:white;border-radius:50%;transition:transform 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2)"></span>
+      </span>
+      ⚡ 批量入庫模式
+    </label>
+    <span id="batch-count" style="font-size:12px;color:var(--accent);font-weight:700;display:none">本批 0 件</span>
+  </div>
+
+  <!-- 批量入庫成功提示（浮動） -->
+  <div id="batch-success-banner" style="display:none;position:absolute;top:80px;left:16px;right:16px;z-index:100;background:linear-gradient(135deg,#16a34a,#22c55e);color:white;padding:14px 20px;border-radius:12px;box-shadow:0 4px 20px rgba(22,163,74,0.4);text-align:center;font-weight:700;font-size:15px;animation:batchFadeIn 0.3s ease">
+    <div id="batch-success-text">✅ 入庫成功！</div>
+    <div style="font-size:12px;opacity:0.85;margin-top:4px">自動準備下一件...</div>
   </div>
 
   <div class="scan-area">
@@ -1523,7 +1517,26 @@ function showScreen(id) {
   if(id === 'screen-tasks') loadTasks();
   if(id === 'screen-home') {
     loadPendingTicker();
+    loadUnclaimedBadge();
   }
+}
+
+// 首頁無人包裹 badge 計數
+async function loadUnclaimedBadge() {
+  var badge = document.getElementById('home-unclaimed-badge');
+  if(!badge || !sb) return;
+  try {
+    var { count, error } = await sb
+      .from('packages')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'unclaimed');
+    if(!error && count > 0) {
+      badge.textContent = count;
+      badge.style.display = 'inline-flex';
+    } else {
+      badge.style.display = 'none';
+    }
+  } catch(e) { badge.style.display = 'none'; }
 }
 
 // ── Data ─────────────────────────────────────────
@@ -1547,6 +1560,34 @@ let recentScans = JSON.parse(sessionStorage.getItem('recentScans')||'[]');
 let uploadedPhotos = [];
 let btDevice = null;
 let btConnected = false;
+let batchMode = false;
+let batchCount = 0;
+
+function toggleBatchMode() {
+  batchMode = !batchMode;
+  var toggle = document.getElementById('batch-toggle');
+  var countEl = document.getElementById('batch-count');
+  if(batchMode) {
+    toggle.classList.add('batch-on');
+    countEl.style.display = '';
+    batchCount = 0;
+    countEl.textContent = '本批 0 件';
+    showToast('⚡ 批量模式已開啟', 'green');
+  } else {
+    toggle.classList.remove('batch-on');
+    countEl.style.display = 'none';
+    showToast('批量模式已關閉');
+  }
+}
+
+function showBatchSuccess(trackNo, weight) {
+  var banner = document.getElementById('batch-success-banner');
+  var text = document.getElementById('batch-success-text');
+  if(!banner) return;
+  text.textContent = '✅ ' + trackNo + '  ' + weight + 'kg  已入庫！';
+  banner.style.display = 'block';
+  setTimeout(function(){ banner.style.display = 'none'; }, 2000);
+}
 
 // ── Init ─────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function(){
@@ -1604,6 +1645,22 @@ let cameraStream = null;
 let scanInterval = null;
 let _quaggaActive = false;
 
+// 掃碼成功時自動截圖存為入庫照片
+function captureFrameAsPhoto() {
+  try {
+    var viewfinder = document.getElementById('scan-viewfinder-div');
+    var video = viewfinder.querySelector('video');
+    if(!video || !video.videoWidth) return;
+    var c = document.createElement('canvas');
+    c.width = video.videoWidth;
+    c.height = video.videoHeight;
+    c.getContext('2d').drawImage(video, 0, 0);
+    var dataUrl = c.toDataURL('image/jpeg', 0.8);
+    uploadedPhotos.push(dataUrl);
+    console.log('📸 自動截圖已存為入庫照片');
+  } catch(e) { console.error('captureFrameAsPhoto error:', e); }
+}
+
 function startCamera() {
   if(cameraStream || _quaggaActive) return;
 
@@ -1626,6 +1683,7 @@ function startCamera() {
         scanInterval = setInterval(function(){
           detector.detect(videoEl).then(function(barcodes){
             if(barcodes.length > 0) {
+              captureFrameAsPhoto();
               stopCamera();
               lookupBarcode(barcodes[0].rawValue);
             }
@@ -1690,6 +1748,7 @@ function startCamera() {
         // 過濾掉太短的誤讀（條碼至少 8 碼）
         if(code.length < 8) return;
         console.log('✅ QuaggaJS detected:', code);
+        captureFrameAsPhoto();
         stopCamera();
         lookupBarcode(code);
       }
@@ -1734,34 +1793,53 @@ async function lookupMemberCode(code) {
   var input = document.getElementById('member-code-input');
   var isUnclaimed = document.getElementById('is-unclaimed');
 
-  // First check local cache
-  var member = members[code];
-  if(member) {
-    if(name) name.textContent = member.name;
-    if(email) email.textContent = member.email;
-    if(isUnclaimed) isUnclaimed.checked = false;
-    if(currentPkg) currentPkg.memberCode = code;
-    showToast('✅ 找到會員：'+member.name, 'green');
-    return;
+  code = code.trim().toUpperCase();
+
+  // 自動補 HJ 前綴：輸入 21645 → 搜尋 HJ21645
+  var codesToTry = [code];
+  if(!code.startsWith('HJ')) codesToTry.push('HJ' + code);
+
+  // First check local cache (try all variants)
+  for(var i = 0; i < codesToTry.length; i++) {
+    var member = members[codesToTry[i]];
+    if(member) {
+      var matchedCode = codesToTry[i];
+      if(name) name.textContent = member.name;
+      if(email) email.textContent = member.email;
+      if(isUnclaimed) isUnclaimed.checked = false;
+      if(currentPkg) currentPkg.memberCode = matchedCode;
+      if(input) input.value = matchedCode;
+      showToast('✅ 找到會員：'+member.name, 'green');
+      return;
+    }
   }
 
   // If not found locally, query Supabase
-  if(code.length >= 4 && sb) {
+  if(sb) {
     try {
-      const { data: sbMember, error } = await sb
+      // 用 in 一次查所有可能的代號（原輸入 + HJ前綴）
+      var { data: rows, error } = await sb
         .from('members')
         .select('*')
-        .eq('member_code', code)
-        .single();
+        .in('member_code', codesToTry);
 
-      if(!error && sbMember) {
-        // Cache it locally
-        members[code] = { name: sbMember.name || sbMember.member_code, email: sbMember.email || '', phone: sbMember.phone || '' };
-        if(name) name.textContent = sbMember.name || sbMember.member_code;
+      console.log('[lookupMember] tried:', codesToTry, 'result:', rows);
+
+      if(!error && rows && rows.length > 0) {
+        var sbMember = rows[0];
+        var matchedCode = sbMember.member_code;
+        // Cache locally
+        members[matchedCode] = {
+          name: sbMember.name || matchedCode,
+          email: sbMember.email || '',
+          phone: sbMember.phone || ''
+        };
+        if(name) name.textContent = sbMember.name || matchedCode;
         if(email) email.textContent = sbMember.email || '';
         if(isUnclaimed) isUnclaimed.checked = false;
-        if(currentPkg) currentPkg.memberCode = code;
-        showToast('✅ 找到會員：'+(sbMember.name || code), 'green');
+        if(currentPkg) currentPkg.memberCode = matchedCode;
+        if(input) input.value = matchedCode;
+        showToast('✅ 找到會員：'+(sbMember.name || matchedCode), 'green');
         return;
       }
     } catch(e) { console.error('Supabase member lookup error:', e); }
@@ -1997,7 +2075,7 @@ function removePhoto(i) {
 }
 
 // ── Confirm Inbound ───────────────────────────────
-function confirmInbound() {
+async function confirmInbound() {
   if(!currentPkg) return;
   const weight = document.getElementById('weight-input').value;
   const note = document.getElementById('inbound-note').value;
@@ -2031,6 +2109,24 @@ function confirmInbound() {
   currentPkg.inboundBy = currentStaff;
   currentPkg.inboundTime = new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
 
+  // 顯示上傳中（按鈕禁用）
+  var confirmBtn = document.querySelector('.btn-confirm');
+  if(confirmBtn) {
+    confirmBtn.disabled = true;
+    confirmBtn.innerHTML = '<span>⏳</span> 上傳中...';
+    confirmBtn.style.opacity = '0.6';
+  }
+
+  // 寫入 Supabase（含照片上傳）
+  await saveToSupabase(currentPkg);
+
+  // 恢復按鈕
+  if(confirmBtn) {
+    confirmBtn.disabled = false;
+    confirmBtn.innerHTML = '<span>✅</span> 確認入庫';
+    confirmBtn.style.opacity = '';
+  }
+
   // Update today count
   todayCount++;
   sessionStorage.setItem('todayCount', todayCount);
@@ -2050,17 +2146,27 @@ function confirmInbound() {
 
   // Show success
   const member = currentPkg.memberCode ? members[currentPkg.memberCode] : null;
+
+  // ── 批量模式：快速顯示成功，自動下一件 ──
+  if(batchMode) {
+    batchCount++;
+    var countEl = document.getElementById('batch-count');
+    if(countEl) countEl.textContent = '本批 ' + batchCount + ' 件';
+    showBatchSuccess(currentPkg.trackNo, parseFloat(weight).toFixed(1));
+    // 自動跳到下一件
+    setTimeout(function(){ scanNext(); }, 800);
+    return;
+  }
+
+  // ── 一般模式：顯示成功頁面 ──
   document.getElementById('success-track').textContent = currentPkg.trackNo;
   document.getElementById('success-detail').innerHTML =
     '會員：<strong>'+(member?member.name+' ('+currentPkg.memberCode+')':currentPkg.memberCode||'未知')+'</strong><br>'
     + '重量：<strong>'+parseFloat(weight).toFixed(2)+' kg</strong><br>'
     + '貨架：<strong>'+(currentPkg.shelf||'—')+'</strong><br>'
-    + '照片：<strong>'+uploadedPhotos.length+'</strong> 張<br>'
+    + '照片：<strong>'+uploadedPhotos.length+'</strong> 張'+(uploadedPhotos.length > 0 ? ' ✅ 已上傳':'')+'<br>'
     + '時間：<strong>'+new Date().toLocaleTimeString('zh-TW')+'</strong><br>'
     + '入庫人員：<strong style="color:var(--accent)">'+currentStaff+'</strong>';
-
-  // 寫入 Supabase
-  saveToSupabase(currentPkg);
 
   showScreen('screen-success');
 }
@@ -2081,10 +2187,60 @@ function renderRecent() {
   }).join('');
 }
 
-// ── Supabase: 入庫寫入 packages 表 ────────────────
+// ── 圖片壓縮工具 ─────────────────────────────────
+function compressImage(dataUrl, maxWidth, quality) {
+  return new Promise(function(resolve){
+    var img = new Image();
+    img.onload = function(){
+      var w = img.width, h = img.height;
+      if(w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
+      var c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      c.toBlob(function(blob){ resolve(blob); }, 'image/jpeg', quality || 0.7);
+    };
+    img.src = dataUrl;
+  });
+}
+
+// ── Supabase: 入庫寫入 packages 表 + 上傳照片 ──────
 async function saveToSupabase(pkg) {
+  if(!sb) return;
+
+  // 1) 上傳照片到 Supabase Storage
+  var photoUrls = [];
+  if(uploadedPhotos.length > 0) {
+    for(var i = 0; i < uploadedPhotos.length; i++) {
+      try {
+        // 壓縮照片（最大寬度 1024px, JPEG 70%）
+        var blob = await compressImage(uploadedPhotos[i], 1024, 0.7);
+        var fileName = pkg.trackNo + '_' + Date.now() + '_' + i + '.jpg';
+        var filePath = 'inbound/' + fileName;
+
+        var { data: upData, error: upErr } = await sb.storage
+          .from('package-photos')
+          .upload(filePath, blob, { contentType: 'image/jpeg', upsert: true });
+
+        if(upErr) {
+          console.warn('照片上傳失敗:', upErr.message);
+          continue;
+        }
+
+        // 取得公開網址
+        var { data: urlData } = sb.storage
+          .from('package-photos')
+          .getPublicUrl(filePath);
+        if(urlData && urlData.publicUrl) {
+          photoUrls.push(urlData.publicUrl);
+          console.log('✅ 照片上傳成功:', urlData.publicUrl);
+        }
+      } catch(e) { console.error('Photo upload error:', e); }
+    }
+  }
+
+  // 2) 寫入 packages 表
   try {
-    const { error } = await sb.from('packages').upsert({
+    var row = {
       tracking_no: pkg.trackNo,
       member_code: pkg.memberCode || null,
       weight_kg: parseFloat(pkg.weight) || 0,
@@ -2094,9 +2250,13 @@ async function saveToSupabase(pkg) {
       scanned_at: new Date().toISOString(),
       processed_by: currentStaffId,
       processed_by_name: currentStaffName
-    }, { onConflict: 'tracking_no' });
+    };
+    // 有照片才存 photo_urls
+    if(photoUrls.length > 0) row.photo_urls = photoUrls;
+
+    var { error } = await sb.from('packages').upsert(row, { onConflict: 'tracking_no' });
     if(error) console.error('Supabase save error:', error);
-    else console.log('✅ Saved to Supabase:', pkg.trackNo, '(' + currentStaffName + ')');
+    else console.log('✅ Saved to Supabase:', pkg.trackNo, '照片' + photoUrls.length + '張', '(' + currentStaffName + ')');
   } catch(e) { console.error(e); }
 }
 
