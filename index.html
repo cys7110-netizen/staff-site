@@ -1255,85 +1255,7 @@ function exportShiplist() {
   showToast('出貨單已匯出 ✅','green');
 }
 
-// ── Query（查 Supabase packages 表，一年內）────────
-async function runStaffQueryDB() {
-  const q = (document.getElementById('query-input').value||'').trim().toUpperCase();
-  const res = document.getElementById('query-results');
-  if(!q) { showToast('請輸入查詢條件'); return; }
-  if(!sb) { showToast('Supabase 未連線'); return; }
-  res.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3);font-size:13px">查詢中...</div>';
-
-  try {
-    var oneYearAgo = new Date();
-    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-    var yearFilter = oneYearAgo.toISOString();
-
-    // 嘗試用追蹤號 or 會員代號查詢
-    var codesToTry = [q];
-    if(!q.startsWith('HJ')) codesToTry.push('HJ' + q);
-
-    var { data: matched, error } = await sb.from('packages').select('*')
-      .or('tracking_no.ilike.%'+q+'%,member_code.in.('+codesToTry.join(',')+')')
-      .gte('scanned_at', yearFilter)
-      .order('scanned_at', {ascending: false})
-      .limit(50);
-
-    if(error) { res.innerHTML = '<div style="text-align:center;padding:24px;color:var(--red)">查詢失敗：'+error.message+'</div>'; return; }
-    matched = matched || [];
-
-    if(!matched.length) {
-      res.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text3);font-size:14px">找不到相關包裹</div>';
-      return;
-    }
-
-    var memberCode = matched[0].member_code || q;
-    var arrived = matched.filter(function(p){ return p.status==='arrived'; });
-
-    // Summary card
-    var html = '<div style="background:var(--card);border:1px solid var(--accent);border-radius:12px;padding:16px;margin-bottom:12px">'
-      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'
-      + '<div><div style="font-size:16px;font-weight:800;color:var(--accent)">'+(memberCode||q)+'</div>'
-      + '<div style="font-size:13px;color:var(--text2);margin-top:2px">'+(matched[0].processed_by_name||'')+'</div></div>'
-      + '<div style="text-align:right"><div style="font-size:28px;font-weight:800;color:var(--accent)">'+matched.length+'</div>'
-      + '<div style="font-size:11px;color:var(--text3)">件包裹</div></div>'
-      + '</div>'
-      + '<div style="display:flex;gap:8px">'
-      + '<div style="flex:1;background:var(--green-bg);border-radius:8px;padding:10px;text-align:center">'
-      + '<div style="font-size:18px;font-weight:700;color:var(--green)">'+arrived.length+'</div>'
-      + '<div style="font-size:11px;color:var(--green)">已入庫</div></div>'
-      + '<div style="flex:1;background:rgba(27,79,138,0.06);border-radius:8px;padding:10px;text-align:center">'
-      + '<div style="font-size:18px;font-weight:700;color:var(--accent)">'+(matched.length-arrived.length)+'</div>'
-      + '<div style="font-size:11px;color:var(--accent)">其他</div></div>'
-      + '</div></div>';
-
-    // Package list
-    html += '<div style="display:flex;flex-direction:column;gap:8px">';
-    matched.forEach(function(p){
-      var trackNo = p.tracking_no||'';
-      var shelf = p.shelf||'未指定';
-      var weight = p.weight_kg||'—';
-      var note = p.note||'';
-      var st = p.status==='arrived'?'已入庫':p.status==='unclaimed'?'無人件':'待入庫';
-      var stColor = p.status==='arrived'?'var(--green-bg);color:var(--green)':p.status==='unclaimed'?'rgba(220,60,60,0.1);color:var(--red)':'rgba(27,79,138,0.1);color:var(--accent)';
-      html += '<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:12px">'
-        + '<div style="flex:1;min-width:0">'
-        + '<div style="font-family:monospace;font-size:12px;color:var(--text2)">'+trackNo+'</div>'
-        + '<div style="display:flex;gap:12px;margin-top:6px;font-size:13px;flex-wrap:wrap">'
-        + '<span style="color:var(--text2)">📍 <strong>'+shelf+'</strong></span>'
-        + '<span style="color:var(--text3)">⚖️ '+weight+' kg</span>'
-        + '</div>'
-        + (note ? '<div style="color:var(--red);font-size:12px;margin-top:4px">⚠️ '+note+'</div>' : '')
-        + '</div>'
-        + '<span style="background:'+stColor+';font-size:11px;padding:4px 10px;border-radius:20px;font-weight:600;white-space:nowrap;flex-shrink:0">'+st+'</span>'
-        + '</div>';
-    });
-    html += '</div>';
-    res.innerHTML = html;
-  } catch(e) {
-    console.error('Query error:', e);
-    res.innerHTML = '<div style="text-align:center;padding:24px;color:var(--red)">查詢失敗</div>';
-  }
-}
+// ── Query: 使用下方的 runStaffQueryDB（Supabase 版）──
 
 // ── Point / Pickup List（本地陣列已清空，實際由 renderPointlistFromDB 從 Supabase 讀取）──
 const pointRequests = [];
@@ -1558,7 +1480,6 @@ function showScreen(id) {
 }
 
 // loadUnclaimedBadge 已整合進 loadDailyStats
-}
 
 // ── Data（Supabase 連動，無需本地 Demo）──
 const members = {};
