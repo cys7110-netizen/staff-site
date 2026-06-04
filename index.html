@@ -2061,6 +2061,20 @@ async function confirmInbound() {
     document.getElementById('weight-input').focus();
     return;
   }
+
+  // 確保會員代號有值（從輸入框讀取 + 自動補 HJ）
+  var mcInput = document.getElementById('member-code-input');
+  if(mcInput && mcInput.value.trim() && !currentPkg.memberCode) {
+    var inputCode = mcInput.value.trim().toUpperCase();
+    if(!inputCode.startsWith('HJ')) inputCode = 'HJ' + inputCode;
+    currentPkg.memberCode = inputCode;
+  }
+  // 如果 currentPkg.memberCode 有值但沒有 HJ 前綴，自動補上
+  if(currentPkg.memberCode && !currentPkg.memberCode.startsWith('HJ')) {
+    currentPkg.memberCode = 'HJ' + currentPkg.memberCode;
+  }
+  console.log('📦 送出 member_code:', currentPkg.memberCode);
+
   var isUnclaimed = document.getElementById('is-unclaimed').checked;
   if(isUnclaimed) {
     currentPkg.memberCode = null;
@@ -2074,7 +2088,7 @@ async function confirmInbound() {
 
   // Update package
   const shelf = getShelfValue();
-  currentPkg.status = 'arrived';
+  if(!isUnclaimed) currentPkg.status = 'arrived';
   currentPkg.weight = weight;
   currentPkg.shelf = shelf;
   currentPkg.photos = [...uploadedPhotos];
@@ -2235,8 +2249,8 @@ async function saveToSupabase(pkg) {
     if(photoUrls.length > 0) row.photo_urls = photoUrls;
 
     var { error } = await sb.from('packages').upsert(row, { onConflict: 'tracking_no' });
-    if(error) console.error('Supabase save error:', error);
-    else console.log('✅ Saved to Supabase:', pkg.trackNo, '照片' + photoUrls.length + '張', '(' + currentStaffName + ')');
+    if(error) console.error('❌ Supabase save error:', error);
+    else console.log('✅ Saved to Supabase:', JSON.stringify({tracking_no:row.tracking_no, member_code:row.member_code, status:row.status, weight:row.weight_kg}), '(' + currentStaffName + ')');
   } catch(e) { console.error(e); }
 }
 
