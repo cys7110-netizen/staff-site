@@ -500,15 +500,23 @@ input[type=file] { display:none; }
   </div>
   <div style="flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px">
 
-    <!-- 頂部統計框 -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div onclick="showScreen('screen-pointlist');renderPointlistFromDB()" style="background:var(--card);border:1.5px solid var(--border);border-radius:12px;padding:18px 12px;text-align:center;cursor:pointer">
-        <div style="font-size:30px;font-weight:800;color:var(--red)" id="home-pending">0</div>
-        <div style="font-size:12px;color:var(--text3);margin-top:4px;font-weight:500">📋 待處理申請</div>
+    <!-- 今日統計（韓國時間 00:00 歸零）-->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div style="background:var(--card);border:1.5px solid var(--border);border-radius:12px;padding:14px 10px;text-align:center">
+        <div style="font-size:28px;font-weight:800;color:var(--accent)" id="stat-inbound">-</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:3px;font-weight:500">📦 今日入庫</div>
       </div>
-      <div onclick="showScreen('screen-shiplist')" style="background:var(--card);border:1.5px solid var(--border);border-radius:12px;padding:18px 12px;text-align:center;cursor:pointer">
-        <div style="font-size:30px;font-weight:800;color:var(--green)" id="home-ship">0</div>
-        <div style="font-size:12px;color:var(--text3);margin-top:4px;font-weight:500">✈️ 今日出貨申請</div>
+      <div style="background:var(--card);border:1.5px solid var(--border);border-radius:12px;padding:14px 10px;text-align:center">
+        <div style="font-size:28px;font-weight:800;color:var(--green)" id="stat-shipped">-</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:3px;font-weight:500">✈️ 已出貨</div>
+      </div>
+      <div style="background:var(--card);border:1.5px solid var(--border);border-radius:12px;padding:14px 10px;text-align:center">
+        <div style="font-size:28px;font-weight:800;color:var(--orange, #e67e22)" id="stat-pending-ship">-</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:3px;font-weight:500">⏳ 待出貨</div>
+      </div>
+      <div style="background:var(--card);border:1.5px solid rgba(220,60,60,0.2);border-radius:12px;padding:14px 10px;text-align:center">
+        <div style="font-size:28px;font-weight:800;color:var(--red)" id="stat-unclaimed">-</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:3px;font-weight:500">❓ 無人包裹</div>
       </div>
     </div>
 
@@ -1529,27 +1537,11 @@ function showScreen(id) {
   if(id === 'screen-unclaimed') renderUnclaimed();
   if(id === 'screen-tasks') loadTasks();
   if(id === 'screen-home') {
-    loadPendingTicker();
-    loadUnclaimedBadge();
+    loadDailyStats();
   }
 }
 
-// 首頁無人包裹 badge 計數
-async function loadUnclaimedBadge() {
-  var badge = document.getElementById('home-unclaimed-badge');
-  if(!badge || !sb) return;
-  try {
-    var { count, error } = await sb
-      .from('packages')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'unclaimed');
-    if(!error && count > 0) {
-      badge.textContent = count;
-      badge.style.display = 'inline-flex';
-    } else {
-      badge.style.display = 'none';
-    }
-  } catch(e) { badge.style.display = 'none'; }
+// loadUnclaimedBadge 已整合進 loadDailyStats
 }
 
 // ── Data ─────────────────────────────────────────
@@ -2361,43 +2353,90 @@ async function completeTask(taskId) {
   } catch(e) { console.error(e); }
 }
 
-// ── 首頁統計 + Badge 更新 ──────────────
-async function loadPendingTicker() {
+// ── 首頁統計 + Badge 更新（韓國時間 00:00 歸零）──
+function getKSTTodayRange() {
+  var now = new Date();
+  // 韓國時間 = UTC+9
+  var kstMs = now.getTime() + (9 * 60 + now.getTimezoneOffset()) * 60000;
+  var kst = new Date(kstMs);
+  var start = new Date(Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate()) - 9 * 3600000);
+  var end = new Date(start.getTime() + 24 * 3600000);
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
+async function loadDailyStats() {
   var badge = document.getElementById('pending-badge');
-  var pendingBox = document.getElementById('home-pending');
-  var shipBox = document.getElementById('home-ship');
+  if(!sb) return;
 
-  if(!sb) {
-    if(badge) { badge.textContent = '0'; badge.style.display = 'none'; }
-    if(pendingBox) pendingBox.textContent = '0';
-    if(shipBox) shipBox.textContent = '0';
-    return;
-  }
+  var range = getKSTTodayRange();
+  console.log('📊 載入今日統計（KST）:', range.start, '~', range.end);
+
   try {
-    // 查全部 pending tasks
-    var { data, error } = await sb
+    // 1) 今日入庫：packages status=arrived, scanned_at 在今天
+    var { count: inboundCount } = await sb
+      .from('packages')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'arrived')
+      .gte('scanned_at', range.start)
+      .lt('scanned_at', range.end);
+
+    // 2) 無人包裹（全部，不限今日）
+    var { count: unclaimedCount } = await sb
+      .from('packages')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'unclaimed');
+
+    // 3) 待出貨：tasks type=ship, status=pending
+    var { count: pendingShipCount } = await sb
       .from('tasks')
-      .select('id, task_type')
+      .select('*', { count: 'exact', head: true })
+      .eq('task_type', 'ship')
       .eq('status', 'pending');
-    if(error) { if(badge) badge.textContent = '!'; return; }
 
-    var tasks = data || [];
-    var pendingCount = tasks.filter(function(t){ return t.task_type === 'point' || t.task_type === 'pickup'; }).length;
-    var shipCount = tasks.filter(function(t){ return t.task_type === 'ship'; }).length;
+    // 4) 已出貨（今日完成）：tasks type=ship, status=completed, 今日完成
+    var { count: shippedCount } = await sb
+      .from('tasks')
+      .select('*', { count: 'exact', head: true })
+      .eq('task_type', 'ship')
+      .eq('status', 'completed')
+      .gte('created_at', range.start)
+      .lt('created_at', range.end);
 
-    // 更新按鈕 badge
+    // 5) 待處理申請 (點貨+自取)
+    var { count: pendingTaskCount } = await sb
+      .from('tasks')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'pending')
+      .in('task_type', ['point', 'pickup']);
+
+    // 更新統計框
+    var el;
+    el = document.getElementById('stat-inbound');   if(el) el.textContent = inboundCount || 0;
+    el = document.getElementById('stat-shipped');    if(el) el.textContent = shippedCount || 0;
+    el = document.getElementById('stat-pending-ship'); if(el) el.textContent = pendingShipCount || 0;
+    el = document.getElementById('stat-unclaimed');  if(el) el.textContent = unclaimedCount || 0;
+
+    // 更新按鈕 badge（客人待處理）
     if(badge) {
-      badge.textContent = pendingCount;
-      badge.style.display = pendingCount > 0 ? 'inline-flex' : 'none';
+      badge.textContent = pendingTaskCount || 0;
+      badge.style.display = (pendingTaskCount > 0) ? 'inline-flex' : 'none';
     }
-    // 更新頂部統計框
-    if(pendingBox) pendingBox.textContent = pendingCount;
-    if(shipBox) shipBox.textContent = shipCount;
+
+    // 更新無人包裹按鈕 badge
+    var unclBadge = document.getElementById('home-unclaimed-badge');
+    if(unclBadge) {
+      unclBadge.textContent = unclaimedCount || 0;
+      unclBadge.style.display = (unclaimedCount > 0) ? 'inline-flex' : 'none';
+    }
+
+    console.log('📊 今日統計：入庫', inboundCount, '已出貨', shippedCount, '待出貨', pendingShipCount, '無人', unclaimedCount, '待處理', pendingTaskCount);
   } catch(e) {
-    console.error('loadPendingTicker error:', e);
-    if(badge) badge.textContent = '!';
+    console.error('loadDailyStats error:', e);
   }
 }
+
+// 保留舊名相容
+function loadPendingTicker() { loadDailyStats(); }
 
 // ── Supabase: 出貨訂單讀 tasks 表 ────────────────
 async function renderShiplistFromDB() {
