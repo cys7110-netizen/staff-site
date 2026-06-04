@@ -1602,83 +1602,125 @@ function updateTodayCount() {
 // ── Camera ────────────────────────────────────────
 let cameraStream = null;
 let scanInterval = null;
-let _scanCanvas = null;
-let _scanCtx = null;
+let _quaggaActive = false;
 
 function startCamera() {
-  if(cameraStream) return;
-  navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}}})
-    .then(function(stream){
-      cameraStream = stream;
-      const video = document.getElementById('scan-video');
-      video.srcObject = stream;
-      document.getElementById('scan-placeholder-div').style.display = 'none';
-      document.getElementById('scan-viewfinder-div').style.display = 'block';
+  if(cameraStream || _quaggaActive) return;
 
-      // ── 方案 A：Chrome/Android 原生 BarcodeDetector ──
-      if('BarcodeDetector' in window) {
-        console.log('📷 使用原生 BarcodeDetector');
-        const detector = new BarcodeDetector({formats:['code_128','code_39','ean_13','ean_8','qr_code','data_matrix']});
+  var placeholder = document.getElementById('scan-placeholder-div');
+  var viewfinder = document.getElementById('scan-viewfinder-div');
+  var videoEl = document.getElementById('scan-video');
+
+  // ── 方案 A：Chrome/Android 原生 BarcodeDetector ──
+  if('BarcodeDetector' in window) {
+    console.log('📷 使用原生 BarcodeDetector');
+    navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}}})
+      .then(function(stream){
+        cameraStream = stream;
+        videoEl.srcObject = stream;
+        videoEl.style.display = '';
+        placeholder.style.display = 'none';
+        viewfinder.style.display = 'block';
+
+        var detector = new BarcodeDetector({formats:['code_128','code_39','ean_13','ean_8','qr_code','data_matrix']});
         scanInterval = setInterval(function(){
-          detector.detect(video).then(function(barcodes){
+          detector.detect(videoEl).then(function(barcodes){
             if(barcodes.length > 0) {
-              const code = barcodes[0].rawValue;
               stopCamera();
-              lookupBarcode(code);
+              lookupBarcode(barcodes[0].rawValue);
             }
           }).catch(function(){});
         }, 400);
+      })
+      .catch(function(e){
+        console.error('Camera error:', e);
+        showToast('無法開啟相機，請確認已授權', 'red');
+      });
 
-      // ── 方案 B：Safari/iPhone 用 QuaggaJS 掃碼 ──
-      } else if(typeof Quagga !== 'undefined') {
-        console.log('📷 使用 QuaggaJS（Safari 備用模式）');
-        _scanCanvas = document.createElement('canvas');
-        _scanCtx = _scanCanvas.getContext('2d', {willReadFrequently: true});
-        var _scanning = false;
+  // ── 方案 B：Safari/iPhone → QuaggaJS LiveStream（快速）──
+  } else if(typeof Quagga !== 'undefined') {
+    console.log('📷 使用 QuaggaJS LiveStream（Safari）');
+    videoEl.style.display = 'none'; // 隱藏原生 video，讓 Quagga 自己建
+    placeholder.style.display = 'none';
+    viewfinder.style.display = 'block';
 
-        scanInterval = setInterval(function(){
-          if(_scanning) return; // 上一次還沒跑完就跳過
-          if(!video.videoWidth) return;
-          _scanning = true;
-
-          _scanCanvas.width = video.videoWidth;
-          _scanCanvas.height = video.videoHeight;
-          _scanCtx.drawImage(video, 0, 0);
-
-          Quagga.decodeSingle({
-            decoder: {
-              readers: ['code_128_reader','code_39_reader','ean_reader','ean_8_reader','i2of5_reader']
-            },
-            locate: true,
-            src: _scanCanvas.toDataURL('image/jpeg', 0.8)
-          }, function(result){
-            _scanning = false;
-            if(result && result.codeResult && result.codeResult.code) {
-              console.log('✅ QuaggaJS decoded:', result.codeResult.code);
-              stopCamera();
-              lookupBarcode(result.codeResult.code);
-            }
-          });
-        }, 600);
-
-      } else {
-        showToast('請手動輸入單號（瀏覽器不支援自動掃碼）');
+    Quagga.init({
+      inputStream: {
+        type: 'LiveStream',
+        target: viewfinder,
+        constraints: {
+          facingMode: 'environment',
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }
+      },
+      decoder: {
+        readers: ['code_128_reader','code_39_reader','ean_reader','ean_8_reader','i2of5_reader'],
+        multiple: false
+      },
+      locate: true,
+      frequency: 10,
+      numOfWorkers: 0
+    }, function(err){
+      if(err) {
+        console.error('QuaggaJS init error:', err);
+        showToast('無法開啟相機，請確認已授權', 'red');
+        videoEl.style.display = '';
+        return;
       }
-    })
-    .catch(function(e){
-      console.error('Camera error:', e);
-      showToast('無法開啟相機，請確認已授權', 'red');
+      Quagga.start();
+      _quaggaActive = true;
+      console.log('✅ QuaggaJS LiveStream started');
+
+      // 讓 Quagga 產生的 video/canvas 撐滿容器
+      var qVideo = viewfinder.querySelector('video:not(#scan-video)');
+      var qCanvas = viewfinder.querySelectorAll('canvas');
+      if(qVideo) {
+        qVideo.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:12px;';
+      }
+      qCanvas.forEach(function(c){
+        c.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;border-radius:12px;';
+      });
     });
+
+    Quagga.onDetected(function(result){
+      if(!_quaggaActive) return;
+      if(result && result.codeResult && result.codeResult.code) {
+        var code = result.codeResult.code;
+        // 過濾掉太短的誤讀（條碼至少 8 碼）
+        if(code.length < 8) return;
+        console.log('✅ QuaggaJS detected:', code);
+        stopCamera();
+        lookupBarcode(code);
+      }
+    });
+
+  } else {
+    showToast('請手動輸入單號（瀏覽器不支援自動掃碼）');
+  }
 }
 
 function stopCamera() {
+  // 方案 A cleanup
   if(scanInterval) { clearInterval(scanInterval); scanInterval = null; }
   if(cameraStream) {
     cameraStream.getTracks().forEach(function(t){ t.stop(); });
     cameraStream = null;
   }
-  _scanCanvas = null;
-  _scanCtx = null;
+
+  // 方案 B cleanup
+  if(_quaggaActive) {
+    try { Quagga.stop(); } catch(e){}
+    Quagga.offDetected();
+    _quaggaActive = false;
+    // 清除 QuaggaJS 產生的 video/canvas 元素
+    var viewfinder = document.getElementById('scan-viewfinder-div');
+    viewfinder.querySelectorAll('video:not(#scan-video)').forEach(function(v){ v.remove(); });
+    viewfinder.querySelectorAll('canvas').forEach(function(c){ c.remove(); });
+  }
+
+  var videoEl = document.getElementById('scan-video');
+  if(videoEl) { videoEl.srcObject = null; videoEl.style.display = ''; }
   document.getElementById('scan-placeholder-div').style.display = 'flex';
   document.getElementById('scan-viewfinder-div').style.display = 'none';
 }
