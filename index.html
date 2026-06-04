@@ -1105,12 +1105,8 @@ function doLogout() {
   showScreen('screen-login');
 }
 
-// ── Ship List ─────────────────────────────────────
-const shipOrders = [
-  {no:'S001',member:'HJ001',name:'陳小明',phone:'0912345678',addr:'台北市信義區信義路五段7號',id:'A123456789',method:'空運轉機',pack:'拆箱合併',count:'3',content:'雜物',note:'以下不拆 12/01 1234',status:'pending',packPhoto:null},
-  {no:'S002',member:'HJ002',name:'林美華',phone:'0923456789',addr:'新北市板橋區文化路一段1號',id:'B234567890',method:'空運直飛',pack:'不拆原箱',count:'1',content:'衣服',note:'加強包裝',status:'pending',packPhoto:null},
-  {no:'S003',member:'HJ003',name:'張大偉',phone:'0934567890',addr:'台中市西區台灣大道二段2號',id:'C345678901',method:'海運',pack:'不拆裝箱',count:'5',content:'雜物，含電池',note:'',status:'done',packPhoto:null},
-];
+// ── Ship List（本地陣列已清空，實際由 renderShiplistFromDB 從 Supabase 讀取）──
+const shipOrders = [];
 
 function renderShiplist() {
   var cards = document.getElementById('shiplist-cards');
@@ -1259,30 +1255,45 @@ function exportShiplist() {
   showToast('出貨單已匯出 ✅','green');
 }
 
-// ── Query ─────────────────────────────────────────
-function runStaffQueryDB() {
+// ── Query（查 Supabase packages 表，一年內）────────
+async function runStaffQueryDB() {
   const q = (document.getElementById('query-input').value||'').trim().toUpperCase();
   const res = document.getElementById('query-results');
   if(!q) { showToast('請輸入查詢條件'); return; }
+  if(!sb) { showToast('Supabase 未連線'); return; }
   res.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3);font-size:13px">查詢中...</div>';
-  setTimeout(function(){
-    // Filter packages matching member code or track number
-    const matched = Object.values(packageDB).filter(function(p){
-      return p.memberCode === q || p.trackNo.includes(q);
-    });
+
+  try {
+    var oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    var yearFilter = oneYearAgo.toISOString();
+
+    // 嘗試用追蹤號 or 會員代號查詢
+    var codesToTry = [q];
+    if(!q.startsWith('HJ')) codesToTry.push('HJ' + q);
+
+    var { data: matched, error } = await sb.from('packages').select('*')
+      .or('tracking_no.ilike.%'+q+'%,member_code.in.('+codesToTry.join(',')+')')
+      .gte('scanned_at', yearFilter)
+      .order('scanned_at', {ascending: false})
+      .limit(50);
+
+    if(error) { res.innerHTML = '<div style="text-align:center;padding:24px;color:var(--red)">查詢失敗：'+error.message+'</div>'; return; }
+    matched = matched || [];
+
     if(!matched.length) {
       res.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text3);font-size:14px">找不到相關包裹</div>';
       return;
     }
-    const memberCode = matched[0].memberCode || q;
-    const member = members[memberCode] || null;
-    const arrived = matched.filter(function(p){ return p.status==='arrived'; });
+
+    var memberCode = matched[0].member_code || q;
+    var arrived = matched.filter(function(p){ return p.status==='arrived'; });
 
     // Summary card
     var html = '<div style="background:var(--card);border:1px solid var(--accent);border-radius:12px;padding:16px;margin-bottom:12px">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'
-      + '<div><div style="font-size:16px;font-weight:800;color:var(--accent)">'+memberCode+'</div>'
-      + '<div style="font-size:13px;color:var(--text2);margin-top:2px">'+(member?member.name:'未知會員')+'</div></div>'
+      + '<div><div style="font-size:16px;font-weight:800;color:var(--accent)">'+(memberCode||q)+'</div>'
+      + '<div style="font-size:13px;color:var(--text2);margin-top:2px">'+(matched[0].processed_by_name||'')+'</div></div>'
       + '<div style="text-align:right"><div style="font-size:28px;font-weight:800;color:var(--accent)">'+matched.length+'</div>'
       + '<div style="font-size:11px;color:var(--text3)">件包裹</div></div>'
       + '</div>'
@@ -1292,35 +1303,40 @@ function runStaffQueryDB() {
       + '<div style="font-size:11px;color:var(--green)">已入庫</div></div>'
       + '<div style="flex:1;background:rgba(27,79,138,0.06);border-radius:8px;padding:10px;text-align:center">'
       + '<div style="font-size:18px;font-weight:700;color:var(--accent)">'+(matched.length-arrived.length)+'</div>'
-      + '<div style="font-size:11px;color:var(--accent)">待入庫</div></div>'
+      + '<div style="font-size:11px;color:var(--accent)">其他</div></div>'
       + '</div></div>';
 
     // Package list
     html += '<div style="display:flex;flex-direction:column;gap:8px">';
     matched.forEach(function(p){
+      var trackNo = p.tracking_no||'';
+      var shelf = p.shelf||'未指定';
+      var weight = p.weight_kg||'—';
+      var note = p.note||'';
+      var st = p.status==='arrived'?'已入庫':p.status==='unclaimed'?'無人件':'待入庫';
+      var stColor = p.status==='arrived'?'var(--green-bg);color:var(--green)':p.status==='unclaimed'?'rgba(220,60,60,0.1);color:var(--red)':'rgba(27,79,138,0.1);color:var(--accent)';
       html += '<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:12px">'
         + '<div style="flex:1;min-width:0">'
-        + '<div style="font-family:monospace;font-size:12px;color:var(--text2)">'+p.trackNo+'</div>'
+        + '<div style="font-family:monospace;font-size:12px;color:var(--text2)">'+trackNo+'</div>'
         + '<div style="display:flex;gap:12px;margin-top:6px;font-size:13px;flex-wrap:wrap">'
-        + '<span style="color:var(--text2)">📍 <strong>'+(p.shelf||'未指定')+'</strong></span>'
-        + '<span style="color:var(--text3)">⚖️ '+(p.weight||'—')+' kg</span>'
+        + '<span style="color:var(--text2)">📍 <strong>'+shelf+'</strong></span>'
+        + '<span style="color:var(--text3)">⚖️ '+weight+' kg</span>'
         + '</div>'
-        + (p.note ? '<div style="color:var(--red);font-size:12px;margin-top:4px">⚠️ '+p.note+'</div>' : '')
+        + (note ? '<div style="color:var(--red);font-size:12px;margin-top:4px">⚠️ '+note+'</div>' : '')
         + '</div>'
-        + '<span style="background:'+(p.status==='arrived'?'var(--green-bg);color:var(--green)':'rgba(27,79,138,0.1);color:var(--accent)')+';font-size:11px;padding:4px 10px;border-radius:20px;font-weight:600;white-space:nowrap;flex-shrink:0">'+(p.status==='arrived'?'已入庫':'待入庫')+'</span>'
+        + '<span style="background:'+stColor+';font-size:11px;padding:4px 10px;border-radius:20px;font-weight:600;white-space:nowrap;flex-shrink:0">'+st+'</span>'
         + '</div>';
     });
     html += '</div>';
     res.innerHTML = html;
-  }, 400);
+  } catch(e) {
+    console.error('Query error:', e);
+    res.innerHTML = '<div style="text-align:center;padding:24px;color:var(--red)">查詢失敗</div>';
+  }
 }
 
-// ── Point / Pickup List ───────────────────────────
-const pointRequests = [
-  {id:'P001',member:'HJ001',name:'陳小明',pkgs:['JP123456789TW'],type:'point',note:'確認顏色'},
-  {id:'P002',member:'HJ002',name:'林美華',pkgs:['KR987654321TW'],type:'pickup',note:''},
-  {id:'P003',member:'HJ001',name:'陳小明',pkgs:['KR123456789TW','KR112233445TW'],type:'point',note:''},
-];
+// ── Point / Pickup List（本地陣列已清空，實際由 renderPointlistFromDB 從 Supabase 讀取）──
+const pointRequests = [];
 
 function renderPointlist() {
   var cards = document.getElementById('pointlist-cards');
@@ -1544,20 +1560,11 @@ function showScreen(id) {
 // loadUnclaimedBadge 已整合進 loadDailyStats
 }
 
-// ── Data ─────────────────────────────────────────
-const members = {
-  'HJ001': {name:'陳小明', email:'test001@gmail.com', code:'HJ001'},
-  'HJ002': {name:'林美華', email:'test002@gmail.com', code:'HJ002'},
-  'HJ003': {name:'張大偉', email:'test003@gmail.com', code:'HJ003'},
-};
+// ── Data（Supabase 連動，無需本地 Demo）──
+const members = {};
 
-// Package DB (simulate - real version connects to backend)
-const packageDB = {
-  'KR123456789TW': {trackNo:'KR123456789TW', memberCode:'HJ001', status:'pending', weight:null, photos:[], note:''},
-  'KR987654321TW': {trackNo:'KR987654321TW', memberCode:'HJ002', status:'pending', weight:null, photos:[], note:''},
-  'KR112233445TW': {trackNo:'KR112233445TW', memberCode:'HJ001', status:'arrived', weight:'0.65', photos:[], note:''},
-  'JP123456789TW': {trackNo:'JP123456789TW', memberCode:'HJ001', status:'arrived', weight:'0.85', photos:[], note:'已點貨'},
-};
+// Package DB（掃碼後自動建立，無需 Demo）
+const packageDB = {};
 
 let currentPkg = null;
 let todayCount = parseInt(sessionStorage.getItem('todayCount')||'0');
