@@ -30,8 +30,8 @@ html, body { height:100%; background:var(--bg); font-family:'Noto Sans TC',syste
   display:flex;
   align-items:center;
   justify-content:space-between;
-  padding:0 16px;
-  height:52px;
+  padding:14px 16px;
+  min-height:60px;
   flex-shrink:0;
 }
 .topbar-title { font-size:15px; font-weight:700; letter-spacing:0.5px; }
@@ -498,18 +498,16 @@ input[type=file] { display:none; }
   </div>
   <div style="flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px">
 
-    <!-- 待辦事項：點貨/自取 橫向滑動 -->
-    <div id="pending-section">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-        <div style="font-size:15px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:6px">📋 客人待處理申請 <span id="pending-badge" style="background:var(--red);color:white;font-size:11px;font-weight:700;min-width:20px;height:20px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;padding:0 6px">0</span></div>
-        <button onclick="showScreen('screen-pointlist');renderPointlistFromDB()" style="background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;font-weight:600">查看全部 ›</button>
+    <!-- Menu buttons：5 個功能 -->
+    <button class="menu-btn" onclick="showScreen('screen-pointlist');renderPointlistFromDB()" style="position:relative">
+      <span class="menu-icon">📋</span>
+      <div class="menu-label">
+        <div class="menu-title">客人待處理申請</div>
+        <div class="menu-sub">點貨 · 自取申請確認</div>
       </div>
-      <div class="pending-ticker-scroll" id="pending-ticker-scroll">
-        <div style="flex:0 0 100%;text-align:center;padding:16px;color:var(--text3);font-size:13px">載入中...</div>
-      </div>
-    </div>
-
-    <!-- Menu buttons：4 個功能 -->
+      <span id="pending-badge" style="position:absolute;right:36px;top:50%;transform:translateY(-50%);background:var(--red);color:white;font-size:12px;font-weight:700;min-width:22px;height:22px;border-radius:11px;display:inline-flex;align-items:center;justify-content:center;padding:0 7px">0</span>
+      <span class="menu-arrow">›</span>
+    </button>
     <button class="menu-btn" onclick="showScreen('screen-scan')">
       <span class="menu-icon">📷</span>
       <div class="menu-label">
@@ -540,7 +538,7 @@ input[type=file] { display:none; }
         <div class="menu-title">無人包裹</div>
         <div class="menu-sub">無代號 · 無法對應的包裹</div>
       </div>
-      <span id="home-unclaimed-badge" style="position:absolute;top:12px;right:40px;background:var(--red);color:white;font-size:11px;font-weight:700;min-width:20px;height:20px;border-radius:10px;display:none;align-items:center;justify-content:center;padding:0 6px">0</span>
+      <span id="home-unclaimed-badge" style="position:absolute;right:36px;top:50%;transform:translateY(-50%);background:var(--red);color:white;font-size:12px;font-weight:700;min-width:22px;height:22px;border-radius:11px;display:none;align-items:center;justify-content:center;padding:0 7px">0</span>
       <span class="menu-arrow">›</span>
     </button>
 
@@ -2367,72 +2365,26 @@ async function completeTask(taskId) {
   } catch(e) { console.error(e); }
 }
 
-// ── Pending 點貨/自取 Ticker on Home ──────────────
+// ── Pending 點貨/自取 Badge Count ──────────────
 async function loadPendingTicker() {
-  var scroll = document.getElementById('pending-ticker-scroll');
   var badge = document.getElementById('pending-badge');
-  var pendingNum = document.getElementById('home-pending');
-  if(!scroll) return;
-
-  if(!sb) {
-    scroll.innerHTML = '<div style="flex:0 0 100%;text-align:center;padding:16px;color:var(--text3);font-size:13px">⚠️ 資料庫未連線</div>';
+  if(!badge || !sb) {
     if(badge) badge.textContent = '0';
-    if(pendingNum) pendingNum.textContent = '0';
     return;
   }
-
-  scroll.innerHTML = '<div style="flex:0 0 100%;text-align:center;padding:16px;color:var(--text3);font-size:13px">載入中...</div>';
-
   try {
-    // Load all pending tasks (point + pickup + ship)
-    const { data: allPending, error: allErr } = await sb
+    var { data, error } = await sb
       .from('tasks')
-      .select('*')
+      .select('id, task_type')
       .eq('status', 'pending')
-      .order('created_at', { ascending: false });
-
-    if(allErr) {
-      console.error('loadPendingTicker error:', allErr);
-      scroll.innerHTML = '<div style="flex:0 0 100%;text-align:center;padding:16px;color:var(--red);font-size:13px">載入失敗</div>';
-      if(badge) badge.textContent = '!';
-      return;
-    }
-
-    var tasks = allPending || [];
-    // Update pending count (point + pickup)
-    var pointPickup = tasks.filter(function(t){ return t.task_type === 'point' || t.task_type === 'pickup'; });
-    var shipTasks = tasks.filter(function(t){ return t.task_type === 'ship'; });
-
-    if(pendingNum) pendingNum.textContent = pointPickup.length;
-    if(badge) badge.textContent = pointPickup.length;
-    // Update ship count
-    var shipEl = document.getElementById('home-ship');
-    if(shipEl) shipEl.textContent = shipTasks.length;
-
-    if(pointPickup.length === 0) {
-      scroll.innerHTML = '<div style="flex:0 0 100%;text-align:center;padding:20px;color:var(--text3);font-size:13px">🎉 目前沒有待處理的點貨／自取申請</div>';
-      return;
-    }
-
-    var typeIcon = {point:'🔍 點貨', pickup:'🏪 自取'};
-    var typeClass = {point:'type-point', pickup:'type-pickup'};
-    scroll.innerHTML = pointPickup.map(function(t){
-      var date = t.created_at ? new Date(t.created_at).toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
-      return '<div class="pending-card '+(typeClass[t.task_type]||'')+'">'
-        + '<div style="display:flex;align-items:center">'
-        + '<span class="pc-type">'+(typeIcon[t.task_type]||'📋')+' </span>'
-        + '<span class="pc-member">'+(t.member_code||'—')+'</span>'
-        + '</div>'
-        + '<div class="pc-title">'+(t.title||'—')+'</div>'
-        + (t.details ? '<div class="pc-details">'+t.details+'</div>' : '')
-        + '<div class="pc-time">⏰ '+date+'</div>'
-        + '<button class="pc-btn" onclick="event.stopPropagation();completeTask('+t.id+')">✓ 完成處理</button>'
-        + '</div>';
-    }).join('');
+      .in('task_type', ['point','pickup']);
+    if(error) { badge.textContent = '!'; return; }
+    var count = (data || []).length;
+    badge.textContent = count;
+    badge.style.display = count > 0 ? 'inline-flex' : 'none';
   } catch(e) {
     console.error('loadPendingTicker error:', e);
-    scroll.innerHTML = '<div style="flex:0 0 100%;text-align:center;padding:16px;color:var(--red);font-size:13px">載入失敗</div>';
-    if(badge) badge.textContent = '!';
+    badge.textContent = '!';
   }
 }
 
