@@ -456,7 +456,9 @@ input[type=file] { display:none; }
       <div>
         <div style="font-size:12px;color:var(--text2);margin-bottom:6px;font-weight:500">帳號</div>
         <input id="login-user" type="text" placeholder="輸入員工編號 (例: A0001)" autocapitalize="characters"
+          oninput="this.value=this.value.toUpperCase();lookupStaffName(this.value)"
           style="width:100%;background:var(--card);border:1.5px solid var(--border);color:var(--text);font-size:16px;padding:14px;border-radius:10px;outline:none">
+        <div id="login-staff-info" style="margin-top:8px;padding:10px 14px;background:var(--bg);border-radius:8px;font-size:14px;font-weight:600;color:var(--accent);display:none;text-align:center;letter-spacing:0.5px"></div>
       </div>
       <div>
         <div style="font-size:12px;color:var(--text2);margin-bottom:6px;font-weight:500">密碼</div>
@@ -927,14 +929,123 @@ input[type=file] { display:none; }
 // ── Supabase ─────────────────────────────────────
 const SUPABASE_URL = 'https://zejkbveigebqiiwvosrd.supabase.co';
 const SUPABASE_KEY = 'sb_publishable__R1mWzUGZZQKrBT4L_1RhA_UC6vRa6E';
-const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-console.log('✅ Supabase initialized');
+var sb = null;
+try {
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  console.log('✅ Supabase client created');
+} catch(e) {
+  console.error('❌ Supabase init failed:', e);
+}
+
+// ── 啟動時檢查 employees 表，若空則自動寫入預設員工 ──
+(async function seedDefaultEmployees(){
+  if(!sb) return;
+  try {
+    var { data, error } = await sb.from('employees').select('id').limit(1);
+    if(error) { console.warn('⚠ employees 表查詢失敗:', error.message); return; }
+    if(data && data.length > 0) {
+      console.log('✅ employees 表已有資料，跳過初始化');
+      return;
+    }
+    // 表是空的 → 寫入 A0001~A0100 預設員工
+    console.log('📝 employees 表為空，開始寫入預設員工 A0001-A0100...');
+    var rows = [];
+    for(var i = 1; i <= 100; i++) {
+      var num = String(i).padStart(4, '0');
+      rows.push({
+        emp_no: 'A' + num,
+        name: '員工 A' + num,
+        emp_type: '正職員工',
+        role: 'staff',
+        resigned: false,
+        password: 'A' + num,
+        hourly_rate: 0,
+        monthly_salary: 0,
+        start_date: '2026-01-01'
+      });
+    }
+    var { error: insertErr } = await sb.from('employees').upsert(rows, { onConflict: 'emp_no' });
+    if(insertErr) console.error('❌ 預設員工寫入失敗:', insertErr.message);
+    else console.log('✅ 預設員工 A0001-A0100 已寫入 Supabase');
+  } catch(e) { console.error('seedDefaultEmployees error:', e); }
+})();
 
 // ── Staff Auth ───────────────────────────────────
 var currentStaff = '';
 var currentStaffName = '';
 var currentStaffId = null;
 var currentStaffRole = '';
+var _staffLookupTimer = null;
+
+// 登入畫面：輸入員工編號時自動帶出姓名
+function lookupStaffName(empNo) {
+  var infoEl = document.getElementById('login-staff-info');
+  if(!infoEl) return;
+  empNo = (empNo||'').trim().toUpperCase();
+
+  if(empNo.length < 2) {
+    infoEl.style.display = 'none';
+    return;
+  }
+
+  // 即時顯示 "查詢中"
+  infoEl.style.display = 'block';
+  infoEl.style.color = 'var(--text3)';
+  infoEl.textContent = '查詢中...';
+
+  clearTimeout(_staffLookupTimer);
+  _staffLookupTimer = setTimeout(async function(){
+
+    // 1) 檢查 Supabase 有無初始化
+    if(typeof sb === 'undefined' || !sb) {
+      infoEl.style.color = 'var(--red)';
+      infoEl.textContent = '⚠ 資料庫未連線';
+      console.error('[lookupStaffName] sb is undefined');
+      return;
+    }
+
+    try {
+      console.log('[lookupStaffName] querying emp_no =', empNo);
+
+      var res = await sb
+        .from('employees')
+        .select('emp_no, name, resigned')
+        .eq('emp_no', empNo)
+        .maybeSingle();  // maybeSingle: 找不到不會報 error
+
+      console.log('[lookupStaffName] result:', JSON.stringify(res));
+
+      if(res.error) {
+        infoEl.style.color = 'var(--red)';
+        infoEl.textContent = '⚠ 查詢錯誤：' + (res.error.message || '未知');
+        console.error('[lookupStaffName] error:', res.error);
+        return;
+      }
+
+      if(!res.data) {
+        infoEl.style.color = 'var(--text3)';
+        infoEl.textContent = '查無此員工編號';
+        return;
+      }
+
+      var emp = res.data;
+      if(emp.resigned) {
+        infoEl.style.color = 'var(--red)';
+        infoEl.textContent = emp.emp_no + ' · ' + emp.name + '（已離職）';
+        return;
+      }
+
+      // ✅ 成功找到員工
+      infoEl.style.color = 'var(--accent)';
+      infoEl.textContent = emp.emp_no + ' · ' + emp.name;
+
+    } catch(e) {
+      console.error('[lookupStaffName] catch error:', e);
+      infoEl.style.color = 'var(--red)';
+      infoEl.textContent = '⚠ 連線失敗：' + (e.message || '請確認網路');
+    }
+  }, 400);
+}
 
 async function doStaffLogin() {
   var user = (document.getElementById('login-user').value||'').trim().toUpperCase();
@@ -966,7 +1077,7 @@ async function doStaffLogin() {
       showScreen('screen-home');
       document.getElementById('home-date').textContent = new Date().toLocaleDateString('zh-TW',{month:'2-digit',day:'2-digit',weekday:'short'});
       var badge = document.getElementById('staff-badge');
-      if(badge) badge.textContent = '👤 ' + currentStaff + ' · ' + currentStaffName;
+      if(badge) badge.textContent = currentStaff + ' · ' + currentStaffName;
     }, 300);
   } catch(e) { console.error(e); showToast('登入失敗','red'); }
 }
@@ -1266,66 +1377,136 @@ function completeRequest(id, action) {
 }
 
 // ── Unclaimed Packages ───────────────────────────
-var unclaimedPkgs = [
-  {id:'U001', trackNo:'JP998877001TW', date:'05/28', note:'無代號，貨架B下'},
-  {id:'U002', trackNo:'KR334455667TW', date:'05/29', note:'標籤破損無法辨識'},
-  {id:'U003', trackNo:'不明', date:'05/30', note:'散件，無外箱包裝'},
-];
+var unclaimedPkgs = [];
 
-function renderUnclaimed() {
+async function renderUnclaimed() {
   var cards = document.getElementById('unclaimed-cards');
   var cnt = document.getElementById('unclaimed-count');
   if(!cards) return;
+
+  // Load from Supabase
+  if(sb) {
+    try {
+      const { data, error } = await sb
+        .from('packages')
+        .select('*')
+        .eq('status', 'unclaimed')
+        .order('created_at', { ascending: false });
+      if(!error && data) {
+        unclaimedPkgs = data.map(function(p){
+          return {
+            id: p.id,
+            trackNo: p.tracking_no || '不明',
+            date: p.created_at ? new Date(p.created_at).toLocaleDateString('zh-TW',{month:'2-digit',day:'2-digit'}) : '—',
+            note: p.note || '',
+            dbId: p.id
+          };
+        });
+      }
+    } catch(e) { console.error('Load unclaimed error:', e); }
+  }
+
   if(cnt) cnt.textContent = unclaimedPkgs.length;
   if(!unclaimedPkgs.length) {
-    cards.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3);font-size:14px">目前無無人包裹 🎉</div>';
+    cards.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3);font-size:14px">目前無無人包裹</div>';
     return;
   }
   cards.innerHTML = '';
   unclaimedPkgs.forEach(function(p, i) {
     var card = document.createElement('div');
-    card.style.cssText = 'background:var(--card);border:1.5px solid rgba(220,60,60,0.2);border-radius:12px;overflow:hidden;margin-bottom:8px';
+    card.style.cssText = 'background:var(--card);border:1.5px solid rgba(220,60,60,0.2);border-radius:12px;overflow:hidden;margin-bottom:10px';
     card.innerHTML = '<div style="padding:12px 16px;background:rgba(220,60,60,0.05);border-bottom:1px solid rgba(220,60,60,0.12);display:flex;justify-content:space-between;align-items:center">'
       + '<div>'
-      + '<div style="font-family:monospace;font-size:13px;font-weight:700;color:var(--red)">'+p.trackNo+'</div>'
-      + '<div style="font-size:12px;color:var(--text3);margin-top:2px">📅 '+p.date+'</div>'
+      + '<div style="font-family:monospace;font-size:14px;font-weight:700;color:var(--red)">' + p.trackNo + '</div>'
+      + '<div style="font-size:12px;color:var(--text3);margin-top:3px">到貨日期：' + p.date + '</div>'
       + '</div>'
       + '<span style="background:rgba(220,60,60,0.1);color:var(--red);font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600">待認領</span>'
       + '</div>'
-      + '<div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">'
-      + '<div style="font-size:13px;color:var(--text2)">備註：'+p.note+'</div>'
-      + '<div style="display:flex;gap:8px" id="ubtn-'+p.id+'"></div>'
+      + '<div style="padding:14px 16px;display:flex;flex-direction:column;gap:10px">'
+      + (p.note ? '<div style="font-size:13px;color:var(--text2)">備註：' + p.note + '</div>' : '')
+      + '<div style="display:flex;gap:8px;align-items:center">'
+      + '<input id="claim-input-' + p.id + '" type="text" placeholder="輸入認領會員代號 (例:HJ001)" style="flex:1;background:var(--bg);border:1.5px solid var(--border);color:var(--text);font-size:14px;padding:10px 12px;border-radius:8px;outline:none;text-transform:uppercase" autocapitalize="characters">'
+      + '</div>'
+      + '<div style="display:flex;gap:8px" id="ubtn-' + p.id + '"></div>'
       + '</div>';
     cards.appendChild(card);
-    var btnDiv = card.querySelector('#ubtn-'+p.id);
-    var matchBtn = document.createElement('button');
-    matchBtn.textContent = '✅ 已對應';
-    matchBtn.style.cssText = 'flex:1;background:var(--green);border:none;color:white;font-size:13px;font-weight:700;padding:11px;border-radius:8px;cursor:pointer';
-    matchBtn.addEventListener('click', function(){
-      unclaimedPkgs.splice(i,1);
-      showToast('已標記對應完成','green');
-      renderUnclaimed();
+
+    var btnDiv = card.querySelector('#ubtn-' + p.id);
+    var claimBtn = document.createElement('button');
+    claimBtn.textContent = '認領送出';
+    claimBtn.style.cssText = 'flex:1;background:var(--accent);border:none;color:white;font-size:13px;font-weight:700;padding:11px;border-radius:8px;cursor:pointer';
+    claimBtn.addEventListener('click', function(){
+      var memberInput = document.getElementById('claim-input-' + p.id);
+      var memberCode = memberInput ? memberInput.value.trim().toUpperCase() : '';
+      if(!memberCode) { showToast('請輸入認領的會員代號','red'); return; }
+      claimUnclaimedPackage(p, memberCode);
     });
+
     var editBtn = document.createElement('button');
-    editBtn.textContent = '✏️ 備註';
+    editBtn.textContent = '備註';
     editBtn.style.cssText = 'flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text2);font-size:13px;padding:11px;border-radius:8px;cursor:pointer';
     editBtn.addEventListener('click', function(){
       var note = prompt('更新備註：', p.note);
-      if(note !== null) { p.note = note; renderUnclaimed(); }
+      if(note !== null) {
+        p.note = note;
+        if(sb && p.dbId) {
+          sb.from('packages').update({note:note}).eq('id', p.dbId).then(function(){});
+        }
+        renderUnclaimed();
+      }
     });
-    btnDiv.appendChild(matchBtn);
+
+    btnDiv.appendChild(claimBtn);
     btnDiv.appendChild(editBtn);
   });
+}
+
+async function claimUnclaimedPackage(pkg, memberCode) {
+  if(!sb) { showToast('資料庫未連線','red'); return; }
+  try {
+    const { data: memberData, error: memberErr } = await sb
+      .from('members')
+      .select('*')
+      .eq('member_code', memberCode)
+      .single();
+    if(memberErr || !memberData) {
+      showToast('找不到此會員代號：' + memberCode, 'red');
+      return;
+    }
+    const { error: updateErr } = await sb.from('packages').update({
+      member_code: memberCode,
+      status: 'arrived',
+      note: (pkg.note ? pkg.note + ' | ' : '') + '由無人包裹認領（' + currentStaffName + '）',
+      processed_by: currentStaffId,
+      processed_by_name: currentStaffName
+    }).eq('id', pkg.dbId);
+    if(updateErr) { showToast('認領失敗：' + updateErr.message, 'red'); return; }
+    showToast('認領成功！已歸入 ' + memberCode + '（' + (memberData.name || '') + '）的包裹明細', 'green');
+    renderUnclaimed();
+  } catch(e) { console.error(e); showToast('認領失敗','red'); }
 }
 
 function addUnclaimedManual() {
   var track = prompt('輸入追蹤單號（若不明請輸入「不明」）：');
   if(!track) return;
   var note = prompt('備註（例：無代號、破箱）：') || '';
-  var today = new Date().toLocaleDateString('zh-TW',{month:'2-digit',day:'2-digit'}).replace('/','/');
-  unclaimedPkgs.push({id:'U'+Date.now(), trackNo:track, date:today, note:note});
-  showToast('已新增無人包裹','green');
-  renderUnclaimed();
+  if(sb) {
+    sb.from('packages').insert({
+      tracking_no: track.trim().toUpperCase(),
+      status: 'unclaimed',
+      note: note,
+      processed_by: currentStaffId,
+      processed_by_name: currentStaffName
+    }).then(function(res){
+      if(res.error) { showToast('新增失敗','red'); return; }
+      showToast('已新增無人包裹（' + currentStaffName + '）','green');
+      renderUnclaimed();
+    });
+  } else {
+    unclaimedPkgs.push({id:'U'+Date.now(), trackNo:track, date:new Date().toLocaleDateString('zh-TW',{month:'2-digit',day:'2-digit'}), note:note});
+    showToast('已新增無人包裹','green');
+    renderUnclaimed();
+  }
 }
 
 // ── Override showScreen to render data on navigate ─
@@ -1462,23 +1643,45 @@ function stopCamera() {
 }
 
 // ── Member Code Lookup ───────────────────────────
-function lookupMemberCode(code) {
+async function lookupMemberCode(code) {
   if(!code || code.length < 3) return;
-  var member = members[code];
   var avatar = document.getElementById('member-avatar');
   var name = document.getElementById('member-name');
   var email = document.getElementById('member-email');
   var input = document.getElementById('member-code-input');
   var isUnclaimed = document.getElementById('is-unclaimed');
 
+  // First check local cache
+  var member = members[code];
   if(member) {
-
     if(name) name.textContent = member.name;
     if(email) email.textContent = member.email;
     if(isUnclaimed) isUnclaimed.checked = false;
     if(currentPkg) currentPkg.memberCode = code;
     showToast('✅ 找到會員：'+member.name, 'green');
-  } else if(code.length >= 4) {
+    return;
+  }
+
+  // If not found locally, query Supabase
+  if(code.length >= 4 && sb) {
+    try {
+      const { data: sbMember, error } = await sb
+        .from('members')
+        .select('*')
+        .eq('member_code', code)
+        .single();
+
+      if(!error && sbMember) {
+        // Cache it locally
+        members[code] = { name: sbMember.name || sbMember.member_code, email: sbMember.email || '', phone: sbMember.phone || '' };
+        if(name) name.textContent = sbMember.name || sbMember.member_code;
+        if(email) email.textContent = sbMember.email || '';
+        if(isUnclaimed) isUnclaimed.checked = false;
+        if(currentPkg) currentPkg.memberCode = code;
+        showToast('✅ 找到會員：'+(sbMember.name || code), 'green');
+        return;
+      }
+    } catch(e) { console.error('Supabase member lookup error:', e); }
 
     if(name) name.textContent = '找不到會員';
     if(email) email.textContent = code;
@@ -1804,11 +2007,13 @@ async function saveToSupabase(pkg) {
       weight_kg: parseFloat(pkg.weight) || 0,
       shelf: pkg.shelf || null,
       note: pkg.note || null,
-      status: 'arrived',
-      scanned_at: new Date().toISOString()
+      status: pkg.status === 'unclaimed' ? 'unclaimed' : 'arrived',
+      scanned_at: new Date().toISOString(),
+      processed_by: currentStaffId,
+      processed_by_name: currentStaffName
     }, { onConflict: 'tracking_no' });
     if(error) console.error('Supabase save error:', error);
-    else console.log('✅ Saved to Supabase:', pkg.trackNo);
+    else console.log('✅ Saved to Supabase:', pkg.trackNo, '(' + currentStaffName + ')');
   } catch(e) { console.error(e); }
 }
 
@@ -1998,7 +2203,7 @@ async function renderShiplistFromDB() {
       .from('tasks')
       .select('*')
       .eq('task_type', 'ship')
-      .eq('status', 'pending')
+      .in('status', ['pending','completed'])
       .order('created_at', { ascending: false });
     if(error) { cards.innerHTML = '<div style="color:var(--red);padding:20px">載入失敗</div>'; return; }
     if(!data || data.length === 0) {
@@ -2007,15 +2212,66 @@ async function renderShiplistFromDB() {
     }
     cards.innerHTML = data.map(function(t){
       var date = t.created_at ? new Date(t.created_at).toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
-      return '<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px">'
+      var isDone = t.status === 'completed';
+      var cardBg = isDone ? 'rgba(0,0,0,0.03)' : 'var(--card)';
+      var cardBorder = isDone ? 'rgba(0,0,0,0.08)' : 'var(--border)';
+      var opacity = isDone ? '0.6' : '1';
+      // Parse special requirements from details
+      var details = t.details || '';
+      var hasGlass = /玻璃/.test(details);
+      var hasReceipt = /收據/.test(details);
+      var notes = t.notes || '';
+
+      return '<div style="background:'+cardBg+';border:1px solid '+cardBorder+';border-radius:10px;padding:14px;margin-bottom:10px;opacity:'+opacity+'">'
         + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
-        + '<div><span style="font-weight:700">✈️ '+t.title+'</span><br><span style="font-size:11px;color:var(--text3)">'+(t.member_code||'')+'  ·  '+date+'</span></div>'
-        + '<button onclick="completeTask('+t.id+')" style="background:var(--green);border:none;color:white;padding:6px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">✓ 完成</button>'
+        + '<div><span style="font-weight:700">'+(isDone?'✅':'✈️')+' '+t.title+'</span>'
+        + (isDone?'<span style="font-size:11px;color:var(--green);margin-left:8px">已完成</span>':'')
+        + '<br><span style="font-size:11px;color:var(--text3)">'+(t.member_code||'')+'  ·  '+date+'</span></div>'
+        + (isDone?'':'<button onclick="confirmShipPacking('+t.id+')" style="background:var(--green);border:none;color:white;padding:6px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">📦 包裝完成</button>')
         + '</div>'
-        + (t.details ? '<div style="font-size:12px;color:var(--text2);background:var(--bg);border-radius:6px;padding:10px;line-height:1.7;white-space:pre-line">'+t.details+'</div>' : '')
+        + (details ? '<div style="font-size:12px;color:var(--text2);background:var(--bg);border-radius:6px;padding:10px;line-height:1.7;white-space:pre-line">'+details+'</div>' : '')
+        + (notes ? '<div style="font-size:11px;color:var(--red);background:rgba(220,60,60,0.05);border:1px solid rgba(220,60,60,0.15);border-radius:6px;padding:8px 10px;margin-top:6px;line-height:1.5">⚠️ 客人備註：'+notes+'</div>' : '')
+        + (t.completed_by_name ? '<div style="font-size:10px;color:var(--text3);margin-top:6px;text-align:right">處理人員：'+t.completed_by_name+'</div>' : '')
         + '</div>';
     }).join('');
   } catch(e) { console.error(e); }
+}
+
+// ── 包裝完成確認 ──
+async function confirmShipPacking(taskId) {
+  try {
+    const { data: task, error } = await sb.from('tasks').select('*').eq('id', taskId).single();
+    if(error || !task) { showToast('找不到此任務','red'); return; }
+
+    var details = task.details || '';
+    var notes = task.notes || '';
+    var alertMsg = '⚠️ 請確認以下客人需求都已完成：\n\n';
+    alertMsg += '📦 出貨內容：' + (task.title || '—') + '\n';
+    alertMsg += '👤 會員代號：' + (task.member_code || '—') + '\n';
+    if(details) alertMsg += '📋 出貨明細：\n' + details + '\n';
+    if(notes) alertMsg += '\n⚠️ 特殊需求：\n' + notes + '\n';
+    alertMsg += '\n確認已完成所有包裝並送出？';
+
+    if(!confirm(alertMsg)) return;
+
+    await sb.from('tasks').update({
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+      completed_by: currentStaffId,
+      completed_by_name: currentStaffName
+    }).eq('id', taskId);
+
+    // Update package status
+    var trackNos = (task.title || '').split(/[,，\s]+/);
+    for(var i=0; i<trackNos.length; i++) {
+      var tn = trackNos[i].trim();
+      if(tn) await sb.from('packages').update({status:'shipping'}).eq('tracking_no',tn);
+    }
+
+    showToast('包裝完成 ✅（'+currentStaffName+'）','green');
+    renderShiplistFromDB();
+    loadPendingTicker();
+  } catch(e) { console.error(e); showToast('操作失敗','red'); }
 }
 
 // ── Supabase: 點貨/自取讀 tasks 表 ────────────────
@@ -2057,30 +2313,40 @@ async function runStaffQueryDB() {
   var results = document.getElementById('query-results');
   results.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">查詢中...</div>';
 
+  // Calculate 1-year-ago date
+  var oneYearAgo = new Date();
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+  var yearFilter = oneYearAgo.toISOString();
+
   try {
     // 先用 tracking_no 查
     var { data, error } = await sb
       .from('packages')
       .select('*')
       .ilike('tracking_no', '%'+val+'%')
-      .limit(20);
+      .gte('created_at', yearFilter)
+      .order('created_at', { ascending: false })
+      .limit(50);
     // 如果沒結果，試 member_code
     if((!data || data.length === 0) && !error) {
       var res2 = await sb
         .from('packages')
         .select('*')
         .ilike('member_code', '%'+val+'%')
-        .limit(20);
+        .gte('created_at', yearFilter)
+        .order('created_at', { ascending: false })
+        .limit(50);
       data = res2.data;
       error = res2.error;
     }
     if(error) { results.innerHTML = '<div style="color:var(--red);padding:20px">查詢失敗</div>'; return; }
     if(!data || data.length === 0) {
-      results.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">找不到符合的包裹</div>';
+      results.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">找不到符合的包裹（僅搜尋一年內記錄）</div>';
       return;
     }
-    var statusMap = {arrived:'已到庫',checking:'點貨中',point_done:'點貨完成',wait_pickup:'待自取',picked:'已自取',shipping:'出貨中',delivered:'已出貨'};
-    results.innerHTML = data.map(function(p){
+    var statusMap = {arrived:'已到庫',checking:'點貨中',point_done:'點貨完成',wait_pickup:'待自取',picked:'已自取',shipping:'出貨中',delivered:'已出貨',unclaimed:'無人包裹'};
+    results.innerHTML = '<div style="font-size:11px;color:var(--text3);margin-bottom:8px">共 '+data.length+' 筆結果（一年內）</div>' + data.map(function(p){
+      var entryDate = p.created_at ? new Date(p.created_at).toLocaleDateString('zh-TW') : '—';
       return '<div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px">'
         + '<div style="display:flex;justify-content:space-between;align-items:center">'
         + '<span style="font-family:monospace;font-size:13px;font-weight:600">'+(p.tracking_no||'')+'</span>'
@@ -2088,7 +2354,9 @@ async function runStaffQueryDB() {
         + '</div>'
         + '<div style="font-size:12px;color:var(--text3);margin-top:6px">'
         + '會員：'+(p.member_code||'—')+' · 重量：'+(p.weight_kg||0)+' kg · 貨架：'+(p.shelf||'—')
-        + '</div></div>';
+        + '</div>'
+        + '<div style="font-size:11px;color:var(--text3);margin-top:3px">入庫日期：'+entryDate+(p.processed_by_name?' · 處理人員：'+p.processed_by_name:'')+'</div>'
+        + '</div>';
     }).join('');
   } catch(e) { console.error(e); }
 }
