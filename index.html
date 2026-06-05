@@ -1625,18 +1625,14 @@ async function updateTodayCount() {
   if(!sb) return;
   try {
     var range = getKSTTodayRange();
+    // 用 OR 同時查 scanned_at 和 created_at（解決 upsert 時 created_at 不更新 + scanned_at 可能 NULL 的問題）
     var { count, error } = await sb
       .from('packages')
       .select('*', { count: 'exact', head: true })
-      .gte('created_at', range.start)
-      .lt('created_at', range.end);
+      .or('scanned_at.gte.' + range.start + ',created_at.gte.' + range.start)
+      .or('scanned_at.lt.' + range.end + ',created_at.lt.' + range.end);
     if(!error && count !== null) {
       todayCount = count;
-    }
-    // fallback: scanned_at NULL → 用 created_at
-    if(!todayCount) {
-      var r = await sb.from('packages').select('*',{count:'exact',head:true}).gte('created_at',range.start).lt('created_at',range.end);
-      if(r.count) todayCount = r.count;
     }
   } catch(e) { console.error('updateTodayCount error:', e); }
   var txt = '今日 ' + todayCount + ' 件';
@@ -2358,17 +2354,12 @@ async function loadDailyStats() {
   console.log('📊 載入今日統計（KST）:', range.start, '~', range.end);
 
   try {
-    // 1) 今日入庫：所有今天掃碼的包裹（不限狀態）
+    // 1) 今日入庫：scanned_at 或 created_at 在今天
     var { count: inboundCount } = await sb
       .from('packages')
       .select('*', { count: 'exact', head: true })
-      .gte('created_at', range.start)
-      .lt('created_at', range.end);
-    // fallback: scanned_at 為 NULL 的用 created_at
-    if(!inboundCount) {
-      var r0 = await sb.from('packages').select('*', { count: 'exact', head: true }).gte('created_at', range.start).lt('created_at', range.end);
-      if(r0.count) inboundCount = r0.count;
-    }
+      .or('scanned_at.gte.' + range.start + ',created_at.gte.' + range.start)
+      .or('scanned_at.lt.' + range.end + ',created_at.lt.' + range.end);
 
     // 2) 無人包裹（全部，不限今日）
     var { count: unclaimedCount } = await sb
