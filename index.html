@@ -698,7 +698,7 @@ input[type=file] { display:none; }
 
     <!-- 藍牙秤 + 重量 -->
     <div class="weight-card">
-      <div class="section-label">⚖️ 重量</div>
+      <div class="section-label">重量</div>
 
       <div id="bt-bar" class="bt-bar disconnected" onclick="connectBluetooth()">
         <div class="bt-dot"></div>
@@ -1314,7 +1314,7 @@ function renderPointlist() {
         + '<div style="font-family:monospace;font-size:12px;color:var(--accent);margin-bottom:4px">'+t+'</div>'
         + '<div style="display:flex;gap:14px;font-size:13px">'
         + '<span style="color:var(--text2)">📍 <strong>'+(pkg.shelf||'未指定')+'</strong></span>'
-        + '<span style="color:var(--text3)">⚖️ '+(pkg.weight||'—')+' kg</span>'
+        + '<span style="color:var(--text3)">'+(pkg.weight||'—')+' kg</span>'
         + '</div></div>';
     }).join('');
 
@@ -1415,7 +1415,7 @@ async function renderUnclaimed() {
     card.innerHTML = '<div style="padding:12px 16px;background:rgba(220,60,60,0.05);border-bottom:1px solid rgba(220,60,60,0.12);display:flex;justify-content:space-between;align-items:center">'
       + '<div>'
       + '<div style="font-family:monospace;font-size:14px;font-weight:700;color:var(--red)">' + p.trackNo + '</div>'
-      + '<div style="font-size:12px;color:var(--text3);margin-top:3px">到貨：' + p.date + ' · ⚖️' + p.weight + 'kg · 📍' + p.shelf + '</div>'
+      + '<div style="font-size:12px;color:var(--text3);margin-top:3px">到貨：' + p.date + ' · ' + p.weight + 'kg · 📍' + p.shelf + '</div>'
       + (p.processedBy ? '<div style="font-size:11px;color:var(--text3);margin-top:2px">入庫員工：' + p.processedBy + '</div>' : '')
       + '</div>'
       + '<span style="background:rgba(220,60,60,0.1);color:var(--red);font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600">待認領</span>'
@@ -1424,7 +1424,7 @@ async function renderUnclaimed() {
       + (p.note ? '<div style="font-size:13px;color:var(--text2)">備註：' + p.note + '</div>' : '')
       + photoHtml
       + '<div style="display:flex;gap:8px;align-items:center">'
-      + '<input id="claim-input-' + p.id + '" type="text" placeholder="輸入認領會員代號 (例:HJ21645)" style="flex:1;background:var(--bg);border:1.5px solid var(--border);color:var(--text);font-size:14px;padding:10px 12px;border-radius:8px;outline:none;text-transform:uppercase" autocapitalize="characters" oninput="lookupClaimMember(this.value,\'' + p.id + '\')">'
+      + '<input id="claim-input-' + p.id + '" type="text" placeholder="輸入5位數字代號（自動帶入HJ）" style="flex:1;background:var(--bg);border:1.5px solid var(--border);color:var(--text);font-size:14px;padding:10px 12px;border-radius:8px;outline:none;text-transform:uppercase" autocapitalize="characters" inputmode="numeric" maxlength="5" oninput="this.value=this.value.replace(/[^0-9]/g,\'\');lookupClaimMember(\'HJ\'+this.value,\'' + p.id + '\')">'
       + '</div>'
       + '<div id="claim-member-info-' + p.id + '" style="font-size:12px;color:var(--accent);display:none;padding:4px 8px;background:rgba(27,79,138,0.05);border-radius:6px"></div>'
       + '<div style="display:flex;gap:8px" id="ubtn-' + p.id + '"></div>'
@@ -1437,9 +1437,9 @@ async function renderUnclaimed() {
     claimBtn.style.cssText = 'flex:1;background:var(--accent);border:none;color:white;font-size:13px;font-weight:700;padding:11px;border-radius:8px;cursor:pointer';
     claimBtn.addEventListener('click', function(){
       var memberInput = document.getElementById('claim-input-' + p.id);
-      var memberCode = memberInput ? memberInput.value.trim().toUpperCase() : '';
-      if(!memberCode) { showToast('請輸入認領的會員代號','red'); return; }
-      claimUnclaimedPackage(p, memberCode);
+      var digits = memberInput ? memberInput.value.trim().replace(/[^0-9]/g,'') : '';
+      if(!digits || digits.length < 3) { showToast('請輸入會員數字代號（至少3碼）','red'); return; }
+      claimUnclaimedPackage(p, 'HJ' + digits);
     });
 
     var editBtn = document.createElement('button');
@@ -1667,17 +1667,16 @@ async function updateTodayCount() {
   if(!sb) return;
   try {
     var range = getKSTTodayRange();
-    // 查詢 1: created_at 在今天（新包裹）
-    var r1 = await sb.from('packages').select('*', { count: 'exact', head: true })
-      .gte('created_at', range.start).lt('created_at', range.end);
-    // 查詢 2: scanned_at 在今天（重掃包裹）
-    var c2 = 0;
-    try {
-      var r2 = await sb.from('packages').select('*', { count: 'exact', head: true })
-        .gte('scanned_at', range.start).lt('scanned_at', range.end);
-      c2 = r2.count || 0;
-    } catch(e2){}
-    todayCount = Math.max(r1.count||0, c2);
+    // 直接撈全部包裹的時間欄位，用 JS 篩選（避免 Supabase 日期查詢問題）
+    var { data, error } = await sb.from('packages').select('id,created_at,scanned_at,updated_at');
+    if(error) { console.error('updateTodayCount error:', error); return; }
+    var s = range.start, e = range.end;
+    todayCount = (data||[]).filter(function(p){
+      return (p.created_at && p.created_at >= s && p.created_at < e)
+          || (p.scanned_at && p.scanned_at >= s && p.scanned_at < e)
+          || (p.updated_at && p.updated_at >= s && p.updated_at < e);
+    }).length;
+    console.log('📊 todayCount='+todayCount+' (total='+((data||[]).length)+', range='+s+'~'+e+')');
   } catch(e) { console.error('updateTodayCount error:', e); }
   var txt = '今日 ' + todayCount + ' 件';
   var el1 = document.getElementById('today-count');
@@ -2398,53 +2397,38 @@ async function loadDailyStats() {
   console.log('📊 載入今日統計（KST）:', range.start, '~', range.end);
 
   try {
-    // 1) 今日入庫：兩個查詢取最大值
-    var r1a = await sb.from('packages').select('*',{count:'exact',head:true}).gte('created_at',range.start).lt('created_at',range.end);
-    var c1b = 0;
-    try { var r1b = await sb.from('packages').select('*',{count:'exact',head:true}).gte('scanned_at',range.start).lt('scanned_at',range.end); c1b = r1b.count||0; } catch(e){}
-    var inboundCount = Math.max(r1a.count||0, c1b);
+    // 1) 今日入庫：撈全部包裹用 JS 篩選日期（最可靠）
+    var { data: allPkgDates } = await sb.from('packages').select('id,created_at,scanned_at,updated_at');
+    var ds = range.start, de = range.end;
+    var inboundCount = (allPkgDates||[]).filter(function(p){
+      return (p.created_at && p.created_at >= ds && p.created_at < de)
+          || (p.scanned_at && p.scanned_at >= ds && p.scanned_at < de)
+          || (p.updated_at && p.updated_at >= ds && p.updated_at < de);
+    }).length;
 
-    // 2) 無人包裹（全部，不限今日）
-    var { count: unclaimedCount } = await sb
-      .from('packages')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'unclaimed');
+    // 2-5) 撈全部 tasks + packages 用 JS 篩選
+    var { data: allTasks } = await sb.from('tasks').select('id,task_type,type,status,created_at');
+    var unclaimedCount = (allPkgDates||[]).filter(function(p){
+      // 用原始資料重新算（allPkgDates 已經撈過）
+      return false; // placeholder
+    }).length;
+    // 無人包裹：從包裹表算
+    var { data: uPkgs } = await sb.from('packages').select('id,status');
+    unclaimedCount = (uPkgs||[]).filter(function(p){ return p.status === 'unclaimed'; }).length;
 
-    // 3) 待出貨：tasks task_type=ship, status=pending
-    var { count: pendingShipCount } = await sb
-      .from('tasks')
-      .select('*', { count: 'exact', head: true })
-      .eq('task_type', 'ship')
-      .eq('status', 'pending');
-    // fallback: type 欄位
-    if(!pendingShipCount) {
-      var r = await sb.from('tasks').select('*', { count:'exact', head:true }).eq('type','ship').eq('status','pending');
-      if(r.count) pendingShipCount = r.count;
-    }
+    var pendingShipCount = (allTasks||[]).filter(function(t){
+      return (t.task_type==='ship'||t.type==='ship') && t.status==='pending';
+    }).length;
 
-    // 4) 已出貨（今日完成）
-    var { count: shippedCount } = await sb
-      .from('tasks')
-      .select('*', { count: 'exact', head: true })
-      .eq('task_type', 'ship')
-      .eq('status', 'completed')
-      .gte('created_at', range.start)
-      .lt('created_at', range.end);
-    if(!shippedCount) {
-      var r2 = await sb.from('tasks').select('*', { count:'exact', head:true }).eq('type','ship').eq('status','completed').gte('created_at',range.start).lt('created_at',range.end);
-      if(r2.count) shippedCount = r2.count;
-    }
+    var shippedCount = (allTasks||[]).filter(function(t){
+      return (t.task_type==='ship'||t.type==='ship') && t.status==='completed'
+        && t.created_at && t.created_at >= ds && t.created_at < de;
+    }).length;
 
-    // 5) 待處理申請 (點貨+自取)
-    var { count: pendingTaskCount } = await sb
-      .from('tasks')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'pending')
-      .in('task_type', ['point', 'pickup']);
-    if(!pendingTaskCount) {
-      var r3 = await sb.from('tasks').select('*', { count:'exact', head:true }).eq('status','pending').in('type',['point','pickup']);
-      if(r3.count) pendingTaskCount = r3.count;
-    }
+    var pendingTaskCount = (allTasks||[]).filter(function(t){
+      var tt = t.task_type || t.type || '';
+      return (tt==='point'||tt==='pickup') && t.status==='pending';
+    }).length;
 
     // 更新統計框
     var el;
@@ -2500,12 +2484,12 @@ async function renderShiplistFromDB() {
     }
     // 收集所有會員代號，批次查詢包裹資料
     var memberCodes = [...new Set(data.filter(function(t){return t.member_code}).map(function(t){return t.member_code}))];
-    var memberPkgs = {};
+    var memberAllPkgs = {};
     if(memberCodes.length > 0) {
-      var { data: pkgRows } = await sb.from('packages').select('*').in('member_code', memberCodes).eq('status','arrived');
+      var { data: pkgRows } = await sb.from('packages').select('*').in('member_code', memberCodes);
       (pkgRows||[]).forEach(function(p){
-        if(!memberPkgs[p.member_code]) memberPkgs[p.member_code] = [];
-        memberPkgs[p.member_code].push(p);
+        if(!memberAllPkgs[p.member_code]) memberAllPkgs[p.member_code] = [];
+        memberAllPkgs[p.member_code].push(p);
       });
     }
 
@@ -2521,16 +2505,24 @@ async function renderShiplistFromDB() {
       var opacity = isDone ? '0.6' : '1';
       var details = t.details || '';
       var notes = t.notes || '';
-      var pkgs = memberPkgs[t.member_code] || [];
+      var allPkgs = memberAllPkgs[t.member_code] || [];
+
+      // 解析出貨單號
+      var shipMatch = details.match(/出貨單號[：:]\s*(.+?)(\n|$)/);
+      var shipTrackNos = shipMatch ? shipMatch[1].split(/[,，、\s]+/).map(function(s){return s.trim()}).filter(Boolean) : [];
+      // 從包裹列表中找出指定單號
+      var shipPkgs = shipTrackNos.length > 0
+        ? allPkgs.filter(function(p){ return shipTrackNos.includes(p.tracking_no); })
+        : allPkgs.filter(function(p){ return p.status==='arrived'; });
+      // 剩餘在庫
+      var remainPkgs = allPkgs.filter(function(p){ return p.status==='arrived' && !shipTrackNos.includes(p.tracking_no); });
 
       var html = '<div style="background:'+cardBg+';border:1px solid '+cardBorder+';border-radius:10px;padding:14px;margin-bottom:12px;opacity:'+opacity+'">'
-        // 標題列
         + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
         + '<div><span style="font-weight:700;font-size:14px">'+(isDone?'✅':'✈️')+' '+t.title+'</span>'
         + (isDone?'<span style="font-size:11px;color:var(--green);margin-left:8px">已完成</span>':'')
         + '<br><span style="font-size:12px;color:var(--text3);font-weight:600">'+(t.member_code||'—')+'</span>'
         + '<span style="font-size:11px;color:var(--text3);margin-left:8px">'+date+'</span></div>'
-        + (isDone?'':'<button onclick="confirmShipPacking(\''+t.id+'\')" style="background:var(--green);border:none;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">📦 包裝完成</button>')
         + '</div>';
 
       // 客人需求明細
@@ -2541,15 +2533,17 @@ async function renderShiplistFromDB() {
         html += '<div style="font-size:11px;color:var(--red);background:rgba(220,60,60,0.05);border:1px solid rgba(220,60,60,0.15);border-radius:6px;padding:8px 10px;margin-bottom:8px;line-height:1.5">⚠️ 備註：'+notes+'</div>';
       }
 
-      // 該會員在庫包裹（單號、貨架、照片）
-      if(pkgs.length > 0) {
-        html += '<div style="background:rgba(27,79,138,0.04);border:1px solid rgba(27,79,138,0.1);border-radius:6px;padding:10px;margin-top:4px">'
-          + '<div style="font-size:11px;font-weight:600;color:var(--accent);margin-bottom:6px">📦 在庫包裹 '+pkgs.length+' 件</div>';
-        pkgs.forEach(function(p){
+      // 出貨包裹（只顯示指定單號）
+      if(shipPkgs.length > 0) {
+        html += '<div style="background:rgba(27,79,138,0.04);border:1px solid rgba(27,79,138,0.1);border-radius:6px;padding:10px;margin-bottom:8px">'
+          + '<div style="font-size:11px;font-weight:600;color:var(--accent);margin-bottom:6px">📦 出貨包裹 '+shipPkgs.length+' 件'
+          + (remainPkgs.length > 0 ? '<span style="color:var(--text3);font-weight:400;margin-left:8px">（客人剩餘 '+remainPkgs.length+' 件在庫）</span>' : '')
+          + '</div>';
+        shipPkgs.forEach(function(p){
           var photos = p.photo_urls || [];
           html += '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(27,79,138,0.08);flex-wrap:wrap">'
             + '<span style="font-family:monospace;font-size:11px;min-width:120px">'+(p.tracking_no||'')+'</span>'
-            + '<span style="font-size:11px;color:var(--text3)">⚖️'+(p.weight_kg||0)+'kg</span>'
+            + '<span style="font-size:11px;color:var(--text3)">'+(p.weight_kg||0)+'kg</span>'
             + '<span style="font-size:11px;font-weight:600;color:var(--accent)">📍'+(p.shelf||'—')+'</span>';
           if(photos.length > 0) {
             photos.forEach(function(url){
@@ -2561,8 +2555,40 @@ async function renderShiplistFromDB() {
         html += '</div>';
       }
 
+      // 包裝完成表單（未完成時顯示）
+      if(!isDone) {
+        html += '<div style="background:rgba(40,180,100,0.04);border:1px solid rgba(40,180,100,0.15);border-radius:8px;padding:12px;margin-top:6px">'
+          + '<div style="font-size:12px;font-weight:700;color:var(--green);margin-bottom:10px">📦 包裝完成填寫</div>'
+          // 實際重量
+          + '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'
+          + '<label style="font-size:12px;color:var(--text2);min-width:70px">實際重量</label>'
+          + '<input id="ship-weight-'+t.id+'" type="number" step="0.1" placeholder="公斤" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none">'
+          + '<span style="font-size:12px;color:var(--text3)">kg</span></div>'
+          // 配送單號
+          + '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'
+          + '<label style="font-size:12px;color:var(--text2);min-width:70px">配送單號</label>'
+          + '<input id="ship-tracking-'+t.id+'" type="text" placeholder="物流追蹤單號" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none"></div>'
+          // 運費（自動計算顯示）
+          + '<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">'
+          + '<label style="font-size:12px;color:var(--text2);min-width:70px">運費</label>'
+          + '<span id="ship-cost-'+t.id+'" style="font-size:14px;font-weight:700;color:var(--accent)">—</span>'
+          + '<button onclick="calcShipCost(\''+t.id+'\')" style="background:rgba(27,79,138,0.1);border:none;color:var(--accent);font-size:11px;padding:4px 10px;border-radius:4px;cursor:pointer">計算</button></div>'
+          // 拍照
+          + '<div style="display:flex;gap:8px;margin-bottom:10px">'
+          + '<label style="font-size:12px;color:var(--text2);min-width:70px">包裝照片</label>'
+          + '<input id="ship-photo-'+t.id+'" type="file" accept="image/*" capture="environment" style="flex:1;font-size:12px">'
+          + '</div>'
+          // 送出按鈕
+          + '<button onclick="confirmShipPacking(\''+t.id+'\')" style="width:100%;background:var(--green);border:none;color:white;padding:12px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">✅ 包裝完成送出</button>'
+          + '</div>';
+      }
+
       if(t.completed_by_name) {
         html += '<div style="font-size:10px;color:var(--text3);margin-top:6px;text-align:right">處理人員：'+t.completed_by_name+'</div>';
+      }
+      // 已完成：顯示配送資訊
+      if(isDone && t.ship_weight) {
+        html += '<div style="font-size:11px;color:var(--text3);margin-top:4px;text-align:right">重量：'+t.ship_weight+'kg · 配送：'+(t.ship_logistic||'—')+' · 運費：₩'+(t.ship_cost||0)+'</div>';
       }
       html += '</div>';
       return html;
@@ -2570,38 +2596,95 @@ async function renderShiplistFromDB() {
   } catch(e) { console.error(e); }
 }
 
-// ── 包裝完成確認 ──
+// ── 運費計算（與前台試算一致）──
+function calcShipCost(taskId) {
+  var wEl = document.getElementById('ship-weight-'+taskId);
+  var costEl = document.getElementById('ship-cost-'+taskId);
+  if(!wEl || !costEl) return;
+  var w = parseFloat(wEl.value);
+  if(!w || w <= 0) { costEl.textContent = '請輸入重量'; return; }
+  // 空運直飛 ₩8,000/kg（最低₩15,000），空運轉機 ₩6,500/kg，海運 ₩3,500/kg
+  var rates = { air_direct: 8000, air_transfer: 6500, sea: 3500 };
+  var mins = { air_direct: 15000, air_transfer: 13000, sea: 10000 };
+  // 嘗試從 details 解析出貨方式
+  var method = 'air_transfer'; // default
+  var card = wEl.closest('[style]');
+  if(card) {
+    var text = card.textContent || '';
+    if(/直飛/.test(text)) method = 'air_direct';
+    else if(/海運/.test(text)) method = 'sea';
+  }
+  var rate = rates[method] || 6500;
+  var min = mins[method] || 13000;
+  var cost = Math.max(Math.ceil(w) * rate, min);
+  costEl.textContent = '₩' + cost.toLocaleString() + '（' + Math.ceil(w) + 'kg × ₩' + rate.toLocaleString() + '）';
+  costEl.dataset.cost = cost;
+  costEl.dataset.method = method;
+}
+
+// ── 包裝完成確認（含重量、配送單號、照片、運費）──
 async function confirmShipPacking(taskId) {
   try {
     const { data: task, error } = await sb.from('tasks').select('*').eq('id', taskId).single();
     if(error || !task) { showToast('找不到此任務','red'); return; }
 
-    var details = task.details || '';
-    var notes = task.notes || '';
-    var alertMsg = '⚠️ 請確認以下客人需求都已完成：\n\n';
-    alertMsg += '📦 出貨內容：' + (task.title || '—') + '\n';
-    alertMsg += '👤 會員代號：' + (task.member_code || '—') + '\n';
-    if(details) alertMsg += '📋 出貨明細：\n' + details + '\n';
-    if(notes) alertMsg += '\n⚠️ 特殊需求：\n' + notes + '\n';
-    alertMsg += '\n確認已完成所有包裝並送出？';
+    // 取得表單值
+    var weightEl = document.getElementById('ship-weight-'+taskId);
+    var trackingEl = document.getElementById('ship-tracking-'+taskId);
+    var costEl = document.getElementById('ship-cost-'+taskId);
+    var photoEl = document.getElementById('ship-photo-'+taskId);
 
-    if(!confirm(alertMsg)) return;
+    var shipWeight = weightEl ? parseFloat(weightEl.value) : 0;
+    var shipTracking = trackingEl ? trackingEl.value.trim() : '';
+    var shipCost = costEl && costEl.dataset.cost ? parseInt(costEl.dataset.cost) : 0;
 
+    if(!shipWeight) { showToast('請填寫實際重量','red'); return; }
+    if(!shipTracking) { showToast('請填寫配送單號','red'); return; }
+    if(!shipCost) { calcShipCost(taskId); showToast('請先計算運費','red'); return; }
+
+    // 上傳包裝照片
+    var shipPhotoUrl = '';
+    if(photoEl && photoEl.files && photoEl.files[0]) {
+      var file = photoEl.files[0];
+      var fname = 'ship_'+taskId+'_'+Date.now()+'.jpg';
+      var { data: upData, error: upErr } = await sb.storage.from('package-photos').upload(fname, file);
+      if(!upErr && upData) {
+        var { data: urlData } = sb.storage.from('package-photos').getPublicUrl(fname);
+        shipPhotoUrl = urlData ? urlData.publicUrl : '';
+      }
+    }
+
+    var confirmMsg = '確認包裝完成？\n\n重量：'+shipWeight+'kg\n配送單號：'+shipTracking+'\n運費：₩'+shipCost.toLocaleString();
+    if(!confirm(confirmMsg)) return;
+
+    // 更新 task 狀態 + 儲存包裝資訊
     await sb.from('tasks').update({
       status: 'completed',
       completed_at: new Date().toISOString(),
       completed_by: currentStaffId,
-      completed_by_name: currentStaffName
+      completed_by_name: currentStaffName,
+      ship_weight: shipWeight,
+      ship_logistic: shipTracking,
+      ship_cost: shipCost,
+      ship_photo: shipPhotoUrl,
+      notes: (task.notes||'') + (shipPhotoUrl ? '\n包裝照片：'+shipPhotoUrl : '')
     }).eq('id', taskId);
 
-    // Update package status: 將該會員所有在庫包裹改為出貨中
-    if(task.member_code) {
+    // 更新該會員出貨包裹狀態
+    var details = task.details || '';
+    var shipMatch = details.match(/出貨單號[：:]\s*(.+?)(\n|$)/);
+    if(shipMatch) {
+      var trackNos = shipMatch[1].split(/[,，、\s]+/).filter(Boolean);
+      for(var i=0; i<trackNos.length; i++) {
+        await sb.from('packages').update({status:'shipping'}).eq('tracking_no',trackNos[i].trim());
+      }
+    } else if(task.member_code) {
       await sb.from('packages').update({status:'shipping'}).eq('member_code', task.member_code).eq('status','arrived');
     }
 
     showToast('包裝完成 ✅（'+currentStaffName+'）','green');
     renderShiplistFromDB();
-    loadPendingTicker();
+    loadDailyStats();
   } catch(e) { console.error(e); showToast('操作失敗','red'); }
 }
 
@@ -2798,7 +2881,7 @@ async function searchCustomerDB() {
           + '<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:'+statusColor+'">'+(statusMap[p.status]||p.status||'—')+'</span>'
           + '</div>'
           + '<div style="font-size:12px;color:var(--text3);margin-top:6px;display:flex;flex-wrap:wrap;gap:8px">'
-          + '<span>⚖️ '+(p.weight_kg||0)+' kg</span>'
+          + '<span>'+(p.weight_kg||0)+' kg</span>'
           + '<span>📍 貨架：'+(p.shelf||'—')+'</span>'
           + '<span>📅 '+entryDate+'</span>'
           + (p.processed_by_name ? '<span>👷 '+p.processed_by_name+'</span>' : '')
