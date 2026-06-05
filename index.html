@@ -1628,8 +1628,8 @@ async function updateTodayCount() {
     var { count, error } = await sb
       .from('packages')
       .select('*', { count: 'exact', head: true })
-      .gte('scanned_at', range.start)
-      .lt('scanned_at', range.end);
+      .gte('created_at', range.start)
+      .lt('created_at', range.end);
     if(!error && count !== null) {
       todayCount = count;
     }
@@ -2088,6 +2088,7 @@ async function confirmInbound() {
 
   // 從 Supabase 重新讀取今日入庫數（真實數據）
   await updateTodayCount();
+  loadDailyStats(); // 同步更新首頁統計
 
   // Add to recent
   recentScans.unshift({
@@ -2361,8 +2362,8 @@ async function loadDailyStats() {
     var { count: inboundCount } = await sb
       .from('packages')
       .select('*', { count: 'exact', head: true })
-      .gte('scanned_at', range.start)
-      .lt('scanned_at', range.end);
+      .gte('created_at', range.start)
+      .lt('created_at', range.end);
     // fallback: scanned_at 為 NULL 的用 created_at
     if(!inboundCount) {
       var r0 = await sb.from('packages').select('*', { count: 'exact', head: true }).gte('created_at', range.start).lt('created_at', range.end);
