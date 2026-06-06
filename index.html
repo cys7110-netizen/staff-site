@@ -2926,22 +2926,48 @@ async function searchCustomerDB() {
     var statusMap = {arrived:'已到庫',checking:'點貨中',point_done:'點貨完成',wait_pickup:'待自取',picked:'已自取',shipping:'出貨中',delivered:'已出貨',unclaimed:'無人包裹'};
     var html = '';
 
-    // 會員資訊卡（含貨架位置）
+    // 會員資訊卡（含貨架位置 + 等級）
     if(memberData && memberData.length > 0) {
+      // 計算等級（上月空運重量）
+      var { data: taskData } = await sb.from('tasks').select('*');
+      var now = new Date();
+      var lastMonth = new Date(now.getFullYear(), now.getMonth()-1, 1);
+      var lastMonthStr = lastMonth.getFullYear()+'-'+(lastMonth.getMonth()+1<10?'0':'')+(lastMonth.getMonth()+1);
+
       memberData.forEach(function(m){
         // 找出該會員的主要貨架位置
         var memberPkgs = (pkgData||[]).filter(function(p){ return p.member_code === m.member_code && p.status === 'arrived'; });
         var shelfList = memberPkgs.map(function(p){ return p.shelf; }).filter(function(s){ return s && s !== '—'; });
         var mainShelf = shelfList.length > 0 ? shelfList[0] : '—';
+
+        // 計算上月空運重量 → 決定等級
+        var memberTasks = (taskData||[]).filter(function(t){
+          return t.member_code === m.member_code && (t.status==='completed'||t.status==='paid')
+            && (t.task_type==='ship'||t.type==='ship') && (t.details||'').indexOf('空運') >= 0;
+        });
+        var lastMonthAirKg = memberTasks.filter(function(t){ return (t.created_at||'').substring(0,7)===lastMonthStr; })
+          .reduce(function(s,t){ return s+(t.ship_weight||0); }, 0);
+        var grade = lastMonthAirKg >= 300 ? 'VVIP' : (lastMonthAirKg >= 100 ? 'VIP' : '一般');
+        var gradeColor = grade==='VVIP' ? '#b8860b' : (grade==='VIP' ? '#c4953a' : 'var(--accent)');
+        var gradeNote = grade==='VVIP' ? '空運折抵 ₩10/kg' : (grade==='VIP' ? '空運折抵 ₩5/kg' : '無折扣');
+        var thisMonthAirKg = memberTasks.filter(function(t){ 
+          var ms = now.getFullYear()+'-'+(now.getMonth()+1<10?'0':'')+(now.getMonth()+1);
+          return (t.created_at||'').substring(0,7)===ms; 
+        }).reduce(function(s,t){ return s+(t.ship_weight||0); }, 0);
+
         html += '<div style="background:var(--card);border:2px solid var(--accent);border-radius:10px;padding:14px;margin-bottom:12px">'
           + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'
           + '<div style="background:var(--accent);color:white;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px">👤</div>'
           + '<div><div style="font-weight:700;font-size:15px">'+(m.member_code||code)+'</div>'
           + '<div style="font-size:12px;color:var(--text3)">'+(m.name||'—')+' · '+(m.phone||'—')+'</div></div></div>'
-          + '<div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--text3)">'
-          + '<span>等級：'+(m.level||'一般')+'</span>'
+          + '<div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--text3);align-items:center">'
+          + '<span style="font-weight:700;color:'+gradeColor+';background:'+gradeColor+'15;padding:2px 10px;border-radius:4px">'+(grade==='VVIP'?'👑 ':'')+(grade==='VIP'?'⭐ ':'')+grade+'</span>'
+          + '<span style="color:'+gradeColor+'">'+gradeNote+'</span>'
           + '<span>📍 貨架：<strong style="color:var(--accent)">'+mainShelf+'</strong></span>'
           + '<span>LINE：'+(m.line_id||'—')+'</span>'
+          + '</div>'
+          + '<div style="font-size:11px;color:var(--text3);margin-top:6px">本月空運：'+thisMonthAirKg.toFixed(1)+' kg'
+          + (grade==='一般' ? '（滿 100kg 升 VIP）' : (grade==='VIP' ? '（滿 300kg 升 VVIP）' : ''))
           + '</div></div>';
       });
     }
@@ -2949,8 +2975,14 @@ async function searchCustomerDB() {
     // 包裹列表
     var pkgs = pkgData || [];
     var arrivedCount = pkgs.filter(function(p){return p.status==='arrived'}).length;
+    var searchedCode = memberData && memberData.length > 0 ? memberData[0].member_code : code;
     html += '<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px">'
-      + '<div style="font-weight:700;font-size:14px;margin-bottom:10px">📦 包裹記錄（共 '+pkgs.length+' 筆，在庫 '+arrivedCount+' 筆）</div>';
+      + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">'
+      + '<div style="font-weight:700;font-size:14px">📦 包裹記錄（共 '+pkgs.length+' 筆，在庫 '+arrivedCount+' 筆）</div>';
+    if(arrivedCount > 0) {
+      html += '<button onclick="bulkChangeShelf(\''+searchedCode+'\','+arrivedCount+')" style="background:var(--accent);border:none;color:white;font-size:12px;font-weight:600;padding:8px 14px;border-radius:6px;cursor:pointer">📍 一鍵更換貨架</button>';
+    }
+    html += '</div>';
 
     if(pkgs.length === 0) {
       html += '<div style="text-align:center;padding:20px;color:var(--text3)">此會員無包裹記錄</div>';
@@ -2984,6 +3016,20 @@ async function searchCustomerDB() {
     html += '</div>';
     result.innerHTML = html;
   } catch(e) { console.error(e); result.innerHTML = '<div style="color:var(--red);padding:20px">查詢異常</div>'; }
+}
+
+// ── 一鍵更換貨架位置 ──
+async function bulkChangeShelf(memberCode, count) {
+  var newShelf = prompt('將 ' + memberCode + ' 的 ' + count + ' 件在庫包裹全部移至新貨架：\n\n請輸入新貨架位置（例：A3、B2）');
+  if(!newShelf || !newShelf.trim()) return;
+  newShelf = newShelf.trim().toUpperCase();
+  if(!confirm('確認將 ' + memberCode + ' 所有在庫包裹移至 📍 ' + newShelf + '？')) return;
+  try {
+    var { error } = await sb.from('packages').update({ shelf: newShelf }).eq('member_code', memberCode).eq('status', 'arrived');
+    if(error) { showToast('❌ 更新失敗：' + error.message, 'red'); return; }
+    showToast('✅ ' + count + ' 件包裹已移至 📍 ' + newShelf, 'green');
+    searchCustomerDB();
+  } catch(e) { console.error(e); showToast('操作失敗', 'red'); }
 }
 
 </script>
