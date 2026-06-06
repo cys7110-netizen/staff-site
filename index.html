@@ -2127,7 +2127,10 @@ async function confirmInbound() {
 
   // 從 Supabase 重新讀取今日入庫數（真實數據）
   await updateTodayCount();
-  loadDailyStats(); // 同步更新首頁統計
+  // 即時 +1 更新首頁統計（不等待非同步查詢）
+  var statInEl = document.getElementById('stat-inbound');
+  if(statInEl) statInEl.textContent = parseInt(statInEl.textContent || '0') + 1;
+  loadDailyStats(); // 非同步完整刷新
 
   // Add to recent
   recentScans.unshift({
@@ -2514,7 +2517,7 @@ async function renderShiplistFromDB() {
       var html = '<div style="background:'+cardBg+';border:1px solid '+cardBorder+';border-radius:10px;padding:14px;margin-bottom:12px;opacity:'+opacity+'">'
         + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
         + '<div><span style="font-weight:700;font-size:14px">'+(isDone?'✅':'✈️')+' '+t.title+'</span>'
-        + (isDone?'<span style="font-size:11px;color:var(--green);margin-left:8px">已完成</span>':'')
+        + (isDone?'<span style="font-size:11px;color:var(--green);margin-left:8px;background:rgba(40,180,100,0.1);padding:2px 8px;border-radius:4px;font-weight:700">已包裝完成</span>':'')
         + '<br><span style="font-size:12px;color:var(--text3);font-weight:600">'+(t.member_code||'—')+'</span>'
         + '<span style="font-size:11px;color:var(--text3);margin-left:8px">'+date+'</span></div>'
         + '</div>';
@@ -2586,7 +2589,7 @@ async function renderShiplistFromDB() {
       // 已完成：顯示包裝資訊
       if(isDone) {
         html += '<div style="background:rgba(40,180,100,0.05);border:1px solid rgba(40,180,100,0.15);border-radius:6px;padding:10px;margin-top:6px">'
-          + '<div style="font-size:12px;font-weight:600;color:var(--green);margin-bottom:6px">✅ 包裝完成</div>';
+          + '<div style="font-size:12px;font-weight:600;color:var(--green);margin-bottom:6px">✅ 已包裝完成</div>';
         if(t.ship_weight) html += '<div style="font-size:12px;color:var(--text2)">實際重量：<strong>'+t.ship_weight+' kg</strong></div>';
         if(t.ship_logistic) html += '<div style="font-size:12px;color:var(--text2)">配送單號：<strong>'+t.ship_logistic+'</strong></div>';
         if(t.ship_cost) html += '<div style="font-size:12px;color:var(--accent);font-weight:600">運費：₩'+Number(t.ship_cost).toLocaleString()+'</div>';
