@@ -1480,9 +1480,9 @@ function lookupClaimMember(val, pkgId) {
         var arrived = (pkgs||[]).filter(function(p){ return p.status === 'arrived'; });
         var shelfList = arrived.map(function(p){ return p.shelf; }).filter(function(s){ return s && s !== '—'; });
         var mainShelf = shelfList.length > 0 ? shelfList[0] : '—';
-        info.innerHTML = '👤 <strong>' + m.member_code + '</strong> · ' + (m.name||'—') + ' · ' + (m.phone||'—')
-          + '<br>📍 貨架：<strong>' + mainShelf + '</strong> · 📦 在庫：<strong>' + arrived.length + ' 件</strong>'
-          + (pkgs && pkgs.length > arrived.length ? ' · 總計 ' + pkgs.length + ' 件' : '');
+        info.innerHTML = '👤 <strong>' + m.member_code + '</strong> · ' + (m.name||'—')
+          + '<br>📍 貨架：<strong>' + mainShelf + '</strong> · 📦 認領前：<strong>' + arrived.length + ' 件</strong>'
+          + ' · 認領後：<strong>' + (arrived.length + 1) + ' 件</strong>';
         info.style.display = 'block';
         info.style.color = 'var(--accent)';
         // 存貨架位置供認領時使用
