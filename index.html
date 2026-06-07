@@ -1703,9 +1703,8 @@ async function updateTodayCount() {
     if(error) { console.error('updateTodayCount query error:', error.message); return; }
     var s = range.start, e = range.end;
     todayCount = (data||[]).filter(function(p){
-      return (p.created_at && p.created_at >= s && p.created_at < e)
-          || (p.scanned_at && p.scanned_at >= s && p.scanned_at < e)
-          || (p.updated_at && p.updated_at >= s && p.updated_at < e);
+      return (p.scanned_at && p.scanned_at >= s && p.scanned_at < e)
+          || (!p.scanned_at && p.created_at && p.created_at >= s && p.created_at < e);
     }).length;
     console.log('📊 todayCount='+todayCount+' (total='+(data||[]).length+', range='+s+'~'+e+')');
   } catch(e) { console.error('updateTodayCount error:', e); }
@@ -2435,9 +2434,8 @@ async function loadDailyStats() {
     var { data: allPkgDates } = await sb.from('packages').select('*');
     var ds = range.start, de = range.end;
     var inboundCount = (allPkgDates||[]).filter(function(p){
-      return (p.created_at && p.created_at >= ds && p.created_at < de)
-          || (p.scanned_at && p.scanned_at >= ds && p.scanned_at < de)
-          || (p.updated_at && p.updated_at >= ds && p.updated_at < de);
+      return (p.scanned_at && p.scanned_at >= ds && p.scanned_at < de)
+          || (!p.scanned_at && p.created_at && p.created_at >= ds && p.created_at < de);
     }).length;
 
     // 2-5) 撈全部 tasks 用 JS 篩選
