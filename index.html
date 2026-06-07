@@ -3369,6 +3369,24 @@ const pkgNotes = {};
 let selectedPkgIds = new Set();
 let memberPkgs = [];
 
+// ── 判斷包裹是否為「今日入庫」 ──
+// 優先用 scanned_at（入庫掃描時間），沒有才 fallback 到 created_at
+function isPkgToday(p) {
+  var now = new Date();
+  var todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  var todayEnd   = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+
+  if(p.scannedAt) {
+    var st = new Date(p.scannedAt).getTime();
+    return st >= todayStart.getTime() && st < todayEnd.getTime();
+  }
+  if(p.createdAt) {
+    var ct = new Date(p.createdAt).getTime();
+    return ct >= todayStart.getTime() && ct < todayEnd.getTime();
+  }
+  return false;
+}
+
 // ── 從 Supabase 讀取此會員的包裹（連動掃碼入庫）──
 async function loadMemberPackages() {
   try {
@@ -3394,8 +3412,7 @@ async function loadMemberPackages() {
     const { data, error } = await supabase
       .from('packages')
       .select('*')
-      .eq('member_code', mCode)
-      .order('created_at', { ascending: false });
+      .eq('member_code', mCode);
 
     if(error) {
       console.error('Load packages error:', error);
@@ -3405,9 +3422,9 @@ async function loadMemberPackages() {
 
     // 將 Supabase 資料轉換成前端格式
     memberPkgs = (data || []).map(function(row) {
-      // 入庫日期：優先用 scanned_at，沒有就用 created_at
-      var dateStr = '';
+      // 入庫日期：優先用 scanned_at（入庫掃描時間），沒有才 fallback 到 created_at
       var srcDate = row.scanned_at || row.created_at;
+      var dateStr = '';
       if(srcDate) {
         var d = new Date(srcDate);
         dateStr = String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0');
@@ -3418,6 +3435,8 @@ async function loadMemberPackages() {
         weight: row.weight_kg ? String(row.weight_kg) : '0',
         date: dateStr,
         rawDate: srcDate || '',
+        scannedAt: row.scanned_at || '',
+        createdAt: row.created_at || '',
         status: row.status || 'arrived',
         completedDate: row.shipped_at ? new Date(row.shipped_at).toLocaleDateString('zh-TW',{month:'2-digit',day:'2-digit'}) : '',
         logistic: row.logistic_no || '',
@@ -3426,6 +3445,13 @@ async function loadMemberPackages() {
         shelf: row.shelf || '',
         photoUrls: row.photo_urls || []
       };
+    });
+
+    // 依有效日期（scanned_at 優先，fallback created_at）降冪排序
+    memberPkgs.sort(function(a, b) {
+      var da = a.rawDate ? new Date(a.rawDate).getTime() : 0;
+      var db = b.rawDate ? new Date(b.rawDate).getTime() : 0;
+      return db - da;
     });
 
     console.log('✅ Loaded ' + memberPkgs.length + ' packages from Supabase');
