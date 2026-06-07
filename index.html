@@ -1703,8 +1703,9 @@ async function updateTodayCount() {
     if(error) { console.error('updateTodayCount query error:', error.message); return; }
     var s = range.start, e = range.end;
     todayCount = (data||[]).filter(function(p){
-      return (p.scanned_at && p.scanned_at >= s && p.scanned_at < e)
-          || (!p.scanned_at && p.created_at && p.created_at >= s && p.created_at < e);
+      return (p.created_at && p.created_at >= s && p.created_at < e)
+          || (p.scanned_at && p.scanned_at >= s && p.scanned_at < e)
+          || (p.updated_at && p.updated_at >= s && p.updated_at < e);
     }).length;
     console.log('📊 todayCount='+todayCount+' (total='+(data||[]).length+', range='+s+'~'+e+')');
   } catch(e) { console.error('updateTodayCount error:', e); }
@@ -2434,8 +2435,9 @@ async function loadDailyStats() {
     var { data: allPkgDates } = await sb.from('packages').select('*');
     var ds = range.start, de = range.end;
     var inboundCount = (allPkgDates||[]).filter(function(p){
-      return (p.scanned_at && p.scanned_at >= ds && p.scanned_at < de)
-          || (!p.scanned_at && p.created_at && p.created_at >= ds && p.created_at < de);
+      return (p.created_at && p.created_at >= ds && p.created_at < de)
+          || (p.scanned_at && p.scanned_at >= ds && p.scanned_at < de)
+          || (p.updated_at && p.updated_at >= ds && p.updated_at < de);
     }).length;
 
     // 2-5) 撈全部 tasks 用 JS 篩選
@@ -2704,20 +2706,49 @@ async function confirmShipPacking(taskId) {
     if(!shipWeight) { showToast('請填寫實際重量','red'); return; }
     if(!shipTracking) { showToast('請選擇報關行','red'); return; }
     if(!shipCost) { calcShipCost(taskId); showToast('請先計算運費','red'); return; }
-
-    // 上傳包裝照片
-    var shipPhotoUrl = '';
-    if(photoEl && photoEl.files && photoEl.files[0]) {
-      var file = photoEl.files[0];
-      var fname = 'ship_'+taskId+'_'+Date.now()+'.jpg';
-      var { data: upData, error: upErr } = await sb.storage.from('package-photos').upload(fname, file);
-      if(!upErr && upData) {
-        var { data: urlData } = sb.storage.from('package-photos').getPublicUrl(fname);
-        shipPhotoUrl = urlData ? urlData.publicUrl : '';
-      }
+    // ★ 強制要求包裝照片
+    if(!photoEl || !photoEl.files || !photoEl.files[0]) {
+      showToast('📷 請先拍照上傳包裝完成照片','red'); return;
     }
 
-    var confirmMsg = '確認包裝完成？\n\n重量：'+shipWeight+'kg\n報關行：'+shipTracking+'\n運費：₩'+shipCost.toLocaleString();
+    // ★ 壓縮 + 上傳包裝照片（與入庫照片同規格）
+    var shipPhotoUrl = '';
+    try {
+      var photoFile = photoEl.files[0];
+      // 先轉成 dataURL 再壓縮
+      var photoDataUrl = await new Promise(function(resolve, reject){
+        var reader = new FileReader();
+        reader.onload = function(e){ resolve(e.target.result); };
+        reader.onerror = function(){ reject(new Error('讀取照片失敗')); };
+        reader.readAsDataURL(photoFile);
+      });
+      var compressedBlob = await compressImage(photoDataUrl, 1024, 0.7);
+      var fname = 'ship/' + taskId + '_' + Date.now() + '.jpg';
+
+      var { data: upData, error: upErr } = await sb.storage
+        .from('package-photos')
+        .upload(fname, compressedBlob, { contentType: 'image/jpeg', upsert: true });
+
+      if(upErr) {
+        console.error('❌ 包裝照片上傳失敗:', upErr.message || upErr);
+        showToast('❌ 照片上傳失敗：' + (upErr.message||'未知錯誤'), 'red');
+        return;
+      }
+
+      var { data: urlData } = sb.storage.from('package-photos').getPublicUrl(fname);
+      shipPhotoUrl = (urlData && urlData.publicUrl) ? urlData.publicUrl : '';
+      if(!shipPhotoUrl) {
+        showToast('❌ 無法取得照片網址', 'red');
+        return;
+      }
+      console.log('✅ 包裝照片上傳成功:', shipPhotoUrl);
+    } catch(photoErr) {
+      console.error('包裝照片處理異常:', photoErr);
+      showToast('❌ 照片處理失敗，請重試', 'red');
+      return;
+    }
+
+    var confirmMsg = '確認包裝完成？\n\n重量：'+shipWeight+'kg\n報關行：'+shipTracking+'\n運費：₩'+shipCost.toLocaleString()+'\n照片：✅ 已上傳';
     if(!confirm(confirmMsg)) return;
 
     // 立即更新 UI（不等待 DB）
