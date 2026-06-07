@@ -1656,6 +1656,63 @@ document.addEventListener('DOMContentLoaded', function(){
   } catch(e){ console.error('auto-restore staff login:', e); }
 });
 
+// ── 即時同步機制 ─────────────────────────────────
+// 1) Supabase Realtime：包裹或任務有任何變動 → 立即刷新統計
+function setupRealtimeSync() {
+  if(!sb || !sb.channel) { console.warn('⏭️ Realtime 不可用，僅用輪詢'); return; }
+  try {
+    sb.channel('staff-live-stats')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'packages' }, function(payload) {
+        console.log('🔔 packages 變動:', payload.eventType);
+        refreshAllStats();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, function(payload) {
+        console.log('🔔 tasks 變動:', payload.eventType);
+        refreshAllStats();
+      })
+      .subscribe(function(status) {
+        console.log('📡 Realtime 狀態:', status);
+      });
+  } catch(e) { console.error('Realtime setup error:', e); }
+}
+
+// 統一刷新所有統計（防抖：500ms 內多次觸發只執行一次）
+var _refreshTimer = null;
+function refreshAllStats() {
+  if(_refreshTimer) clearTimeout(_refreshTimer);
+  _refreshTimer = setTimeout(async function() {
+    await updateTodayCount();
+    if(document.getElementById('screen-home') &&
+       document.getElementById('screen-home').classList.contains('active')) {
+      await loadDailyStats();
+    }
+  }, 500);
+}
+
+// 2) 輪詢 fallback：每 30 秒自動刷新（Realtime 萬一斷線也不怕）
+var _lastKSTDate = '';
+setInterval(function() {
+  if(!sb) return;
+  // 檢查是否跨日（KST）
+  var range = getKSTTodayRange();
+  var todayStr = range.start.slice(0, 10);
+  if(_lastKSTDate && _lastKSTDate !== todayStr) {
+    console.log('🌅 偵測到跨日！自動歸零');
+    // 更新日期顯示
+    document.getElementById('scan-date').textContent = new Date().toLocaleDateString('zh-TW',{month:'2-digit',day:'2-digit',weekday:'short'});
+  }
+  _lastKSTDate = todayStr;
+  refreshAllStats();
+}, 30000);
+
+// 3) 啟動 Realtime（等 Supabase 初始化完成後）
+setTimeout(function() {
+  if(sb) {
+    setupRealtimeSync();
+    loadDailyStats();
+  }
+}, 3000);
+
 // ── Screen nav ────────────────────────────────────
 
 function goBack() {
@@ -1698,16 +1755,22 @@ async function updateTodayCount() {
   if(!sb) return;
   try {
     var range = getKSTTodayRange();
-    // select('*') 避免欄位不存在導致查詢失敗
-    var { data, error } = await sb.from('packages').select('*');
-    if(error) { console.error('updateTodayCount query error:', error.message); return; }
-    var s = range.start, e = range.end;
-    todayCount = (data||[]).filter(function(p){
-      return (p.created_at && p.created_at >= s && p.created_at < e)
-          || (p.scanned_at && p.scanned_at >= s && p.scanned_at < e)
-          || (p.updated_at && p.updated_at >= s && p.updated_at < e);
-    }).length;
-    console.log('📊 todayCount='+todayCount+' (total='+(data||[]).length+', range='+s+'~'+e+')');
+    // ★ 高效查詢：只計數 scanned_at 在今天範圍的包裹（不撈全部資料）
+    var { count, error } = await sb.from('packages')
+      .select('id', { count: 'exact', head: true })
+      .gte('scanned_at', range.start)
+      .lt('scanned_at', range.end);
+    if(error) {
+      console.error('updateTodayCount query error:', error.message);
+      // fallback：也查 created_at
+      var res2 = await sb.from('packages')
+        .select('id', { count: 'exact', head: true })
+        .gte('created_at', range.start)
+        .lt('created_at', range.end);
+      count = (res2 && !res2.error) ? res2.count : 0;
+    }
+    todayCount = count || 0;
+    console.log('📊 todayCount=' + todayCount + ' (range=' + range.start + '~' + range.end + ')');
   } catch(e) { console.error('updateTodayCount error:', e); }
   var txt = '今日 ' + todayCount + ' 件';
   var el1 = document.getElementById('today-count');
@@ -2428,35 +2491,50 @@ async function loadDailyStats() {
   if(!sb) return;
 
   var range = getKSTTodayRange();
-  console.log('📊 載入今日統計（KST）:', range.start, '~', range.end);
+  var ds = range.start, de = range.end;
+  console.log('📊 載入今日統計（KST）:', ds, '~', de);
 
   try {
-    // 1) 撈全部包裹 + 全部任務（select('*') 避免欄位不存在導致查詢失敗）
-    var { data: allPkgDates } = await sb.from('packages').select('*');
-    var ds = range.start, de = range.end;
-    var inboundCount = (allPkgDates||[]).filter(function(p){
-      return (p.created_at && p.created_at >= ds && p.created_at < de)
-          || (p.scanned_at && p.scanned_at >= ds && p.scanned_at < de)
-          || (p.updated_at && p.updated_at >= ds && p.updated_at < de);
-    }).length;
+    // ★ 高效查詢：用 count 取代 select('*')
 
-    // 2-5) 撈全部 tasks 用 JS 篩選
-    var { data: allTasks } = await sb.from('tasks').select('*');
-    var unclaimedCount = (allPkgDates||[]).filter(function(p){ return p.status === 'unclaimed'; }).length;
+    // 1) 今日入庫數（scanned_at 在今天範圍）
+    var { count: inboundCount } = await sb.from('packages')
+      .select('id', { count: 'exact', head: true })
+      .gte('scanned_at', ds).lt('scanned_at', de);
 
-    var pendingShipCount = (allTasks||[]).filter(function(t){
-      return (t.task_type==='ship'||t.type==='ship') && t.status==='pending';
-    }).length;
+    // 2) 無人包裹（全域，不限日期）
+    var { count: unclaimedCount } = await sb.from('packages')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'unclaimed');
 
-    var shippedCount = (allTasks||[]).filter(function(t){
-      return (t.task_type==='ship'||t.type==='ship') && (t.status==='completed'||t.status==='paid')
-        && t.created_at && t.created_at >= ds && t.created_at < de;
-    }).length;
+    // 3) 待出貨（task_type=ship, status=pending）
+    var { count: pendingShipCount } = await sb.from('tasks')
+      .select('id', { count: 'exact', head: true })
+      .eq('task_type', 'ship').eq('status', 'pending');
+    // fallback: type 欄位
+    if(!pendingShipCount) {
+      var r2 = await sb.from('tasks').select('id', { count: 'exact', head: true }).eq('type', 'ship').eq('status', 'pending');
+      if(r2.count) pendingShipCount = r2.count;
+    }
 
-    var pendingTaskCount = (allTasks||[]).filter(function(t){
-      var tt = t.task_type || t.type || '';
-      return (tt==='point'||tt==='pickup') && t.status==='pending';
-    }).length;
+    // 4) 今日已出貨
+    var { count: shippedCount } = await sb.from('tasks')
+      .select('id', { count: 'exact', head: true })
+      .eq('task_type', 'ship').in('status', ['completed','paid'])
+      .gte('completed_at', ds).lt('completed_at', de);
+    if(!shippedCount) {
+      var r3 = await sb.from('tasks').select('id', { count: 'exact', head: true }).eq('type', 'ship').in('status', ['completed','paid']).gte('completed_at', ds).lt('completed_at', de);
+      if(r3.count) shippedCount = r3.count;
+    }
+
+    // 5) 客人待處理申請（點貨/自取）
+    var { count: pendingTaskCount } = await sb.from('tasks')
+      .select('id', { count: 'exact', head: true })
+      .in('task_type', ['point','pickup']).eq('status', 'pending');
+    if(!pendingTaskCount) {
+      var r4 = await sb.from('tasks').select('id', { count: 'exact', head: true }).in('type', ['point','pickup']).eq('status', 'pending');
+      if(r4.count) pendingTaskCount = r4.count;
+    }
 
     // 更新統計框
     var el;
@@ -2478,7 +2556,15 @@ async function loadDailyStats() {
       unclBadge.style.display = (unclaimedCount > 0) ? 'inline-flex' : 'none';
     }
 
-    console.log('📊 今日統計：入庫', inboundCount, '已出貨', shippedCount, '待出貨', pendingShipCount, '無人', unclaimedCount, '待處理', pendingTaskCount);
+    // 同步更新 todayCount
+    todayCount = inboundCount || 0;
+    var txt = '今日 ' + todayCount + ' 件';
+    var el1 = document.getElementById('today-count');
+    var el2 = document.getElementById('success-count');
+    if(el1) el1.textContent = txt;
+    if(el2) el2.textContent = txt;
+
+    console.log('📊 今日統計：入庫', inboundCount||0, '已出貨', shippedCount||0, '待出貨', pendingShipCount||0, '無人', unclaimedCount||0, '待處理', pendingTaskCount||0);
   } catch(e) {
     console.error('loadDailyStats error:', e);
   }
@@ -3078,6 +3164,126 @@ async function bulkChangeShelf(memberCode, count) {
     searchCustomerDB();
   } catch(e) { console.error(e); showToast('操作失敗', 'red'); }
 }
+
+// ── 自動清理：出貨超過 6 個月的照片 ──────────────
+// 每天自動執行一次，從 Storage 刪除已出貨超過 180 天的包裹照片
+async function cleanupOldPhotos() {
+  if(!sb) { console.log('⏭️ 清理跳過：Supabase 未連線'); return; }
+
+  // 每天只執行一次
+  var lastRun = localStorage.getItem('photoCleanup_lastRun') || '';
+  var today = new Date().toISOString().slice(0, 10);
+  if(lastRun === today) { console.log('⏭️ 今天已執行過照片清理'); return; }
+
+  console.log('🧹 開始清理出貨超過 6 個月的照片...');
+  var cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - 6);
+  var cutoffISO = cutoff.toISOString();
+  var totalDeleted = 0;
+
+  try {
+    // ── 1. 清理 packages 表的入庫照片 ──
+    var { data: oldPkgs, error: pkgErr } = await sb
+      .from('packages')
+      .select('id, tracking_no, photo_urls, shipped_at')
+      .not('photo_urls', 'is', null)
+      .lt('shipped_at', cutoffISO)
+      .in('status', ['delivered', 'picked', 'shipping']);
+
+    if(pkgErr) { console.error('查詢舊包裹失敗:', pkgErr); }
+
+    var pkgsToClean = (oldPkgs || []).filter(function(p) {
+      var urls = p.photo_urls;
+      if(!urls) return false;
+      if(typeof urls === 'string') { try { urls = JSON.parse(urls); } catch(e){ return false; } }
+      return Array.isArray(urls) && urls.length > 0;
+    });
+
+    if(pkgsToClean.length > 0) {
+      console.log('📦 找到 ' + pkgsToClean.length + ' 個需清理照片的舊包裹');
+
+      for(var i = 0; i < pkgsToClean.length; i++) {
+        var pkg = pkgsToClean[i];
+        var urls = pkg.photo_urls;
+        if(typeof urls === 'string') { try { urls = JSON.parse(urls); } catch(e){ continue; } }
+
+        // 從 URL 解析 Storage 路徑並刪除
+        var filePaths = [];
+        urls.forEach(function(url) {
+          if(typeof url !== 'string') return;
+          var marker = '/storage/v1/object/public/package-photos/';
+          var idx = url.indexOf(marker);
+          if(idx !== -1) {
+            filePaths.push(url.substring(idx + marker.length));
+          }
+        });
+
+        if(filePaths.length > 0) {
+          var { error: delErr } = await sb.storage.from('package-photos').remove(filePaths);
+          if(delErr) {
+            console.warn('⚠️ 刪除照片失敗 (' + pkg.tracking_no + '):', delErr.message);
+          } else {
+            totalDeleted += filePaths.length;
+          }
+        }
+
+        // 清空 DB 中的 photo_urls
+        await sb.from('packages').update({ photo_urls: null }).eq('id', pkg.id);
+      }
+    }
+
+    // ── 2. 清理 tasks 表的包裝完成照片 ──
+    var { data: oldTasks, error: taskErr } = await sb
+      .from('tasks')
+      .select('id, ship_photo, completed_at')
+      .not('ship_photo', 'is', null)
+      .neq('ship_photo', '')
+      .lt('completed_at', cutoffISO)
+      .in('status', ['completed', 'paid']);
+
+    if(taskErr) { console.error('查詢舊任務失敗:', taskErr); }
+
+    var tasksToClean = (oldTasks || []).filter(function(t) {
+      return t.ship_photo && t.ship_photo.trim().length > 0;
+    });
+
+    if(tasksToClean.length > 0) {
+      console.log('📋 找到 ' + tasksToClean.length + ' 個需清理照片的舊任務');
+
+      for(var j = 0; j < tasksToClean.length; j++) {
+        var task = tasksToClean[j];
+        var marker2 = '/storage/v1/object/public/package-photos/';
+        var idx2 = task.ship_photo.indexOf(marker2);
+        if(idx2 !== -1) {
+          var path = task.ship_photo.substring(idx2 + marker2.length);
+          var { error: delErr2 } = await sb.storage.from('package-photos').remove([path]);
+          if(delErr2) {
+            console.warn('⚠️ 刪除包裝照片失敗 (task ' + task.id + '):', delErr2.message);
+          } else {
+            totalDeleted++;
+          }
+        }
+        // 清空 DB 中的 ship_photo
+        await sb.from('tasks').update({ ship_photo: null }).eq('id', task.id);
+      }
+    }
+
+    // 記錄今天已執行
+    localStorage.setItem('photoCleanup_lastRun', today);
+    if(totalDeleted > 0) {
+      console.log('✅ 照片清理完成：共刪除 ' + totalDeleted + ' 張照片（' + pkgsToClean.length + ' 個包裹 + ' + tasksToClean.length + ' 個任務）');
+    } else {
+      console.log('✅ 照片清理完成：目前沒有需要清理的舊照片');
+    }
+  } catch(e) {
+    console.error('照片清理異常:', e);
+  }
+}
+
+// 員工端啟動後 15 秒自動執行清理（不影響正常操作）
+setTimeout(function() {
+  if(sb) cleanupOldPhotos();
+}, 15000);
 
 </script>
 </body>
