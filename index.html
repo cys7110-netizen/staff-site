@@ -2479,7 +2479,7 @@ async function completeTask(taskId) {
 function getKSTTodayRange() {
   var now = new Date();
   // 韓國時間 = UTC+9
-  var kstMs = now.getTime() + (9 * 60 + now.getTimezoneOffset()) * 60000;
+  var kstMs = now.getTime() + 9 * 60 * 60000;
   var kst = new Date(kstMs);
   var start = new Date(Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate()) - 9 * 3600000);
   var end = new Date(start.getTime() + 24 * 3600000);
@@ -2498,9 +2498,16 @@ async function loadDailyStats() {
     // ★ 高效查詢：用 count 取代 select('*')
 
     // 1) 今日入庫數（scanned_at 在今天範圍）
-    var { count: inboundCount } = await sb.from('packages')
+    var { count: inboundCount, error: inboundErr } = await sb.from('packages')
       .select('id', { count: 'exact', head: true })
       .gte('scanned_at', ds).lt('scanned_at', de);
+    if(inboundErr) {
+      console.error('scanned_at 查詢失敗，改用 created_at:', inboundErr.message);
+      var fallback = await sb.from('packages')
+        .select('id', { count: 'exact', head: true })
+        .gte('created_at', ds).lt('created_at', de);
+      inboundCount = (fallback && !fallback.error) ? fallback.count : 0;
+    }
 
     // 2) 無人包裹（全域，不限日期）
     var { count: unclaimedCount } = await sb.from('packages')
