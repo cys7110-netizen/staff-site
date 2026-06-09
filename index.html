@@ -61,6 +61,7 @@ html, body { height:100%; background:var(--bg); font-family:'Noto Sans TC',syste
   gap:12px;
   overflow-y:auto;
   -webkit-overflow-scrolling:touch;
+  min-height:0;
 }
 .scan-viewfinder {
   width:100%;
@@ -153,6 +154,7 @@ html, body { height:100%; background:var(--bg); font-family:'Noto Sans TC',syste
   flex:1; overflow-y:auto; padding:16px;
   display:flex; flex-direction:column; gap:14px;
   min-height:0;
+  -webkit-overflow-scrolling:touch;
 }
 .member-card {
   background:var(--card); border-radius:10px;
@@ -1548,11 +1550,14 @@ function lookupClaimMember(val, pkgId) {
         info.style.color = 'var(--accent)';
         // 存貨架位置供認領時使用
         info.dataset.shelf = mainShelf !== '—' ? mainShelf : '';
+        info.dataset.valid = 'true'; // ★ 標記為有效
       } else {
-        info.innerHTML = '⚠️ 找不到此會員代號（仍可認領）';
+        // ★ 防呆：查無此代號 → 不允許認領
+        info.innerHTML = '❌ 查無會員代號「' + val + '」<br><span style="font-size:12px">此代號不存在，無法認領。請確認後重新輸入。</span>';
         info.style.display = 'block';
-        info.style.color = 'var(--orange, #e67e22)';
+        info.style.color = 'var(--red)';
         info.dataset.shelf = '';
+        info.dataset.valid = 'false'; // 標記為無效
       }
     } catch(e){}
   }, 400);
@@ -1560,13 +1565,26 @@ function lookupClaimMember(val, pkgId) {
 
 async function claimUnclaimedPackage(pkg, memberCode) {
   if(!sb) { showToast('資料庫未連線','red'); return; }
+
+  // ★ 防呆：先驗證代號是否存在於 members 表
+  var info = document.getElementById('claim-member-info-' + pkg.id);
+  if(info && info.dataset.valid === 'false') {
+    alert('❌ 會員代號「' + memberCode + '」不存在！\n\n無法認領，請先確認代號是否正確。');
+    return;
+  }
+
   try {
     // 查詢會員資料 + 貨架位置
     var memberName = '';
     var autoShelf = '';
     try {
       var { data: memberData } = await sb.from('members').select('name').eq('member_code', memberCode).limit(1);
-      if(memberData && memberData.length > 0) memberName = memberData[0].name || '';
+      if(!memberData || memberData.length === 0) {
+        // ★ 再次驗證（以防 info element 不存在的情況）
+        alert('❌ 會員代號「' + memberCode + '」不存在！\n\n無法認領。');
+        return;
+      }
+      memberName = memberData[0].name || '';
     } catch(e){}
     // 取得該會員的貨架位置（從已有包裹）
     var info = document.getElementById('claim-member-info-' + pkg.id);
@@ -1944,7 +1962,7 @@ async function lookupMemberCode(code) {
   var codesToTry = [code];
   if(!code.startsWith('HJ')) codesToTry.push('HJ' + code);
 
-  // First check local cache (try all variants)
+  // === 1) 先查本地快取 ===
   for(var i = 0; i < codesToTry.length; i++) {
     var member = members[codesToTry[i]];
     if(member) {
@@ -1955,25 +1973,23 @@ async function lookupMemberCode(code) {
       if(currentPkg) currentPkg.memberCode = matchedCode;
       if(input) input.value = matchedCode;
       showToast('✅ 找到會員：'+member.name, 'green');
+      // ★ 自動帶入貨架位置
+      autoFillShelfFromExisting(matchedCode);
       return;
     }
   }
 
-  // If not found locally, query Supabase
+  // === 2) 查 Supabase ===
   if(sb) {
     try {
-      // 用 in 一次查所有可能的代號（原輸入 + HJ前綴）
       var { data: rows, error } = await sb
         .from('members')
         .select('*')
         .in('member_code', codesToTry);
 
-      console.log('[lookupMember] tried:', codesToTry, 'result:', rows);
-
       if(!error && rows && rows.length > 0) {
         var sbMember = rows[0];
         var matchedCode = sbMember.member_code;
-        // Cache locally
         members[matchedCode] = {
           name: sbMember.name || matchedCode,
           email: sbMember.email || '',
@@ -1985,14 +2001,71 @@ async function lookupMemberCode(code) {
         if(currentPkg) currentPkg.memberCode = matchedCode;
         if(input) input.value = matchedCode;
         showToast('✅ 找到會員：'+(sbMember.name || matchedCode), 'green');
+        // ★ 自動帶入貨架位置
+        autoFillShelfFromExisting(matchedCode);
         return;
       }
     } catch(e) { console.error('Supabase member lookup error:', e); }
 
-    if(name) name.textContent = '找不到會員';
+    // === 3) ★ 查無此代號 → 防呆：自動標無人包裹 + 跳警告 ===
+    if(name) name.textContent = '⚠️ 查無此會員';
     if(email) email.textContent = code;
-    showToast('找不到此會員代號');
+    if(isUnclaimed) isUnclaimed.checked = true;
+    if(currentPkg) currentPkg.memberCode = null;
+    toggleUnclaimed(true); // 自動標記為無人包裹
+
+    // ★ 跳出明顯的警告視窗
+    alert('⚠️ 查無會員代號：' + code + '\n\n已自動標記為「無人包裹」。\n\n如果代號輸入正確，請聯繫管理員新增此會員。');
   }
+}
+
+// ★ 自動從該客人在庫包裹帶入貨架位置
+async function autoFillShelfFromExisting(memberCode) {
+  if(!sb || !memberCode) return;
+  try {
+    var { data: pkgs } = await sb.from('packages').select('shelf,status')
+      .eq('member_code', memberCode)
+      .eq('status', 'arrived')
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if(!pkgs || pkgs.length === 0) return;
+
+    // 找到最常用的貨架位置
+    var shelfList = pkgs.map(function(p){ return p.shelf; }).filter(function(s){ return s && s !== '—' && s.trim(); });
+    if(shelfList.length === 0) return;
+
+    var mainShelf = shelfList[0]; // 最新的貨架位置
+
+    // 拆解貨架位置（例：A中 → letter=A, pos=中）
+    var letter = mainShelf.charAt(0).toUpperCase();
+    var pos = mainShelf.length > 1 ? mainShelf.substring(1) : '';
+
+    // 自動填入貨架選擇器
+    var letterEl = document.getElementById('shelf-letter');
+    var posEl = document.getElementById('shelf-pos-select');
+    var resultEl = document.getElementById('shelf-result');
+    var manualEl = document.getElementById('shelf-manual');
+
+    if(letterEl && letter >= 'A' && letter <= 'Z') {
+      letterEl.value = letter;
+    }
+    if(posEl && ['上','中','下'].indexOf(pos) >= 0) {
+      posEl.value = pos;
+    }
+    if(resultEl) resultEl.textContent = mainShelf;
+    if(manualEl) manualEl.value = '';
+
+    // 顯示在庫資訊提示
+    var infoMsg = '📍 已自動帶入貨架：' + mainShelf + '（在庫 ' + pkgs.length + ' 件）';
+    showToast(infoMsg, 'green');
+
+    // ★ 如果在庫數多，提供一鍵更換貨架的提示
+    if(pkgs.length >= 5) {
+      setTimeout(function(){
+        showToast('💡 此客人已有 ' + pkgs.length + ' 件在庫，如需換貨架請到「客戶搜尋」一鍵更換', 'orange');
+      }, 2000);
+    }
+  } catch(e) { console.error('autoFillShelf error:', e); }
 }
 
 function toggleUnclaimed(checked) {
@@ -2231,7 +2304,26 @@ async function confirmInbound() {
   if(mcInput && mcInput.value.trim() && !currentPkg.memberCode) {
     var inputCode = mcInput.value.trim().toUpperCase();
     if(!inputCode.startsWith('HJ')) inputCode = 'HJ' + inputCode;
-    currentPkg.memberCode = inputCode;
+
+    // ★ 防呆：檢查此代號是否真的存在
+    var memberExists = !!members[inputCode];
+    if(!memberExists && sb) {
+      try {
+        var { data: chk } = await sb.from('members').select('member_code').eq('member_code', inputCode).limit(1);
+        if(chk && chk.length > 0) memberExists = true;
+      } catch(e) {}
+    }
+    if(!memberExists) {
+      // ★ 代號不存在 → 跳警告，阻止入庫
+      var userChoice = confirm('⚠️ 會員代號「' + inputCode + '」查無此人！\n\n請確認：\n• 按「確定」→ 標記為無人包裹繼續入庫\n• 按「取消」→ 返回修正代號');
+      if(!userChoice) return; // 使用者選擇返回修正
+      // 使用者選擇繼續 → 設為無人包裹
+      currentPkg.memberCode = null;
+      document.getElementById('is-unclaimed').checked = true;
+      toggleUnclaimed(true);
+    } else {
+      currentPkg.memberCode = inputCode;
+    }
   }
   // 如果 currentPkg.memberCode 有值但沒有 HJ 前綴，自動補上
   if(currentPkg.memberCode && !currentPkg.memberCode.startsWith('HJ')) {
