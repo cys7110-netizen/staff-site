@@ -1169,24 +1169,21 @@ async function doStaffLogin() {
       .select('id, emp_no, name, role, resigned')
       .eq('emp_no', user)
       .eq('password', pass)
-      .maybeSingle();
+      .limit(1);
 
-    if(error) {
-      console.error('Login error:', error);
-      showToast('登入失敗：' + (error.message || '未知錯誤'),'red');
-      return;
-    }
-    if(!data) {
-      showToast('帳號或密碼錯誤','red');
-      return;
-    }
-    if(data.resigned) { showToast('此員工已離職，無法登入','red'); return; }
+    console.log('Login:', JSON.stringify({data, error, user}));
 
-    currentStaff = data.emp_no;
-    currentStaffName = data.name;
-    currentStaffId = data.id;
-    currentStaffRole = data.role;
-    try { localStorage.setItem('currentScanStaff', JSON.stringify({id:data.id, empNo:data.emp_no, name:data.name, role:data.role})); } catch(e){}
+    if(error) { showToast('登入失敗：' + (error.message||'未知錯誤'),'red'); return; }
+    if(!data || data.length === 0) { showToast('帳號或密碼錯誤','red'); return; }
+
+    var emp = data[0];
+    if(emp.resigned) { showToast('此員工已離職，無法登入','red'); return; }
+
+    currentStaff = emp.emp_no;
+    currentStaffName = emp.name;
+    currentStaffId = emp.id;
+    currentStaffRole = emp.role;
+    try { localStorage.setItem('currentScanStaff', JSON.stringify({id:emp.id, empNo:emp.emp_no, name:emp.name, role:emp.role})); } catch(e){}
 
     showToast('登入成功 ✅ · ' + currentStaffName,'green');
     setTimeout(function(){
