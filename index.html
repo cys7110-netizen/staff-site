@@ -2983,7 +2983,10 @@ async function renderShiplistFromDB() {
           + '</div>'
           + '<div id="ship-photo-preview-'+t.id+'" style="display:none;margin-bottom:10px"></div>'
           // 送出按鈕
-          + '<button onclick="confirmShipPacking(\''+t.id+'\')" style="width:100%;background:var(--green);border:none;color:white;padding:12px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">✅ 包裝完成送出</button>'
+          + '<div style="display:flex;gap:8px;margin-top:4px">'
+          + '<button onclick="confirmShipPacking(\''+t.id+'\')" style="flex:3;background:var(--green);border:none;color:white;padding:12px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">✅ 包裝完成送出</button>'
+          + '<button onclick="cancelShipTask(\''+t.id+'\',\''+t.member_code+'\')" style="flex:1;background:rgba(220,60,60,0.08);border:1.5px solid rgba(220,60,60,0.25);color:var(--red);padding:12px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">🗑️ 取消</button>'
+          + '</div>'
           + '</div>';
       }
 
@@ -3006,7 +3009,43 @@ async function renderShiplistFromDB() {
   } catch(e) { console.error(e); }
 }
 
-// ── 包裝照片預覽 ──
+// ★ 員工取消出貨（含確認警告）
+async function cancelShipTask(taskId, memberCode) {
+  if(!confirm('⚠️ 確定要取消此出貨申請？\n\n取消後：\n• 客人的包裹狀態會回到「已到庫」\n• 此出貨任務會被刪除\n\n按「確定」繼續取消')) return;
+  if(!sb) { showToast('資料庫未連線','red'); return; }
+
+  try {
+    // 1) 從 task 的 details 中解析出出貨單號
+    var { data: task } = await sb.from('tasks').select('details').eq('id', taskId).single();
+    var trackNos = [];
+    if(task && task.details) {
+      var match = task.details.match(/出貨單號[：:]\s*(.+?)(\n|$)/);
+      if(match) trackNos = match[1].split(/[,，、\s]+/).map(function(s){return s.trim()}).filter(Boolean);
+    }
+
+    // 2) 將相關包裹狀態改回 arrived
+    if(trackNos.length > 0) {
+      for(var i = 0; i < trackNos.length; i++) {
+        await sb.from('packages').update({ status: 'arrived', updated_at: new Date().toISOString() })
+          .eq('tracking_no', trackNos[i]);
+      }
+    } else if(memberCode) {
+      // fallback：把該客人所有 shipping 狀態的包裹改回 arrived
+      await sb.from('packages').update({ status: 'arrived', updated_at: new Date().toISOString() })
+        .eq('member_code', memberCode).eq('status', 'shipping');
+    }
+
+    // 3) 刪除 task
+    await sb.from('tasks').delete().eq('id', taskId);
+
+    showToast('✅ 已取消出貨，包裹已恢復「已到庫」', 'green');
+    renderShiplistFromDB(); // 重新整理列表
+    loadDailyStats(); // 更新首頁統計
+  } catch(e) {
+    console.error('cancelShipTask error:', e);
+    showToast('取消失敗：' + e.message, 'red');
+  }
+}
 function previewShipPhoto(taskId, input) {
   var nameEl = document.getElementById('ship-photo-name-'+taskId);
   var previewEl = document.getElementById('ship-photo-preview-'+taskId);
