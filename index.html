@@ -1164,28 +1164,20 @@ async function doStaffLogin() {
   if(!user||!pass) { showToast('請輸入帳號與密碼','red'); return; }
 
   try {
-    // ★ 先用 emp_no 查員工（不帶密碼條件，避免欄位問題）
     const { data, error } = await sb
       .from('employees')
-      .select('id, emp_no, name, role, resigned, password')
+      .select('id, emp_no, name, role, resigned')
       .eq('emp_no', user)
+      .eq('password', pass)
       .maybeSingle();
-
-    console.log('Login query result:', JSON.stringify({data, error, user, pass}));
 
     if(error) {
       console.error('Login error:', error);
-      showToast('查詢失敗：' + (error.message || '未知錯誤'),'red');
+      showToast('登入失敗：' + (error.message || '未知錯誤'),'red');
       return;
     }
     if(!data) {
-      showToast('查無此員工編號：' + user,'red');
-      return;
-    }
-    // ★ 密碼比對（client-side，大小寫不敏感）
-    var dbPass = (data.password || '').trim().toUpperCase();
-    if(dbPass !== pass) {
-      showToast('密碼錯誤','red');
+      showToast('帳號或密碼錯誤','red');
       return;
     }
     if(data.resigned) { showToast('此員工已離職，無法登入','red'); return; }
@@ -1203,7 +1195,7 @@ async function doStaffLogin() {
       var badge = document.getElementById('staff-badge');
       if(badge) badge.textContent = currentStaff + ' · ' + currentStaffName;
     }, 300);
-  } catch(e) { console.error(e); showToast('登入失敗：' + e.message,'red'); }
+  } catch(e) { console.error(e); showToast('登入失敗','red'); }
 }
 
 function doLogout() {
