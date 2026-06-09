@@ -1540,7 +1540,8 @@ function lookupClaimMember(val, pkgId) {
         var m = data[0];
         // 查詢該會員在庫包裹數 + 貨架位置
         var { data: pkgs } = await sb.from('packages').select('tracking_no,shelf,status').eq('member_code', val);
-        var arrived = (pkgs||[]).filter(function(p){ return p.status === 'arrived'; });
+        var _doneS = ['delivered','picked','transit','shipping'];
+        var arrived = (pkgs||[]).filter(function(p){ return !_doneS.includes(p.status); });
         var shelfList = arrived.map(function(p){ return p.shelf; }).filter(function(s){ return s && s !== '—'; });
         var mainShelf = shelfList.length > 0 ? shelfList[0] : '—';
         info.innerHTML = '👤 <strong>' + m.member_code + '</strong> · ' + (m.name||'—')
@@ -2962,12 +2963,13 @@ async function renderShiplistFromDB() {
       // 解析出貨單號
       var shipMatch = details.match(/出貨單號[：:]\s*(.+?)(\n|$)/);
       var shipTrackNos = shipMatch ? shipMatch[1].split(/[,，、\s]+/).map(function(s){return s.trim()}).filter(Boolean) : [];
+      var _completedS = ['delivered','picked','transit','shipping'];
       // 從包裹列表中找出指定單號
       var shipPkgs = shipTrackNos.length > 0
         ? allPkgs.filter(function(p){ return shipTrackNos.includes(p.tracking_no); })
-        : allPkgs.filter(function(p){ return p.status==='arrived'; });
-      // 剩餘在庫
-      var remainPkgs = allPkgs.filter(function(p){ return p.status==='arrived' && !shipTrackNos.includes(p.tracking_no); });
+        : allPkgs.filter(function(p){ return !_completedS.includes(p.status); });
+      // 剩餘在庫（排除已完成 + 已指定出貨的）
+      var remainPkgs = allPkgs.filter(function(p){ return !_completedS.includes(p.status) && !shipTrackNos.includes(p.tracking_no); });
 
       var html = '<div style="background:'+cardBg+';border:1px solid '+cardBorder+';border-radius:10px;padding:14px;margin-bottom:12px;opacity:'+opacity+'">'
         + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
@@ -3306,7 +3308,7 @@ async function renderPointlistFromDB() {
     var memberCodes = [...new Set(finalData.filter(function(t){return t.member_code}).map(function(t){return t.member_code}))];
     var memberPkgMap = {};
     if(memberCodes.length > 0) {
-      var { data: pkgRows } = await sb.from('packages').select('*').in('member_code', memberCodes).eq('status','arrived').order('created_at',{ascending:false});
+      var { data: pkgRows } = await sb.from('packages').select('*').in('member_code', memberCodes).in('status',['arrived','checking','pointed','point_done','carried','wait_pickup','unclaimed']).order('created_at',{ascending:false});
       (pkgRows||[]).forEach(function(p){
         if(!memberPkgMap[p.member_code]) memberPkgMap[p.member_code] = [];
         memberPkgMap[p.member_code].push(p);
@@ -3732,8 +3734,9 @@ async function searchCustomerDB() {
       var lastMonthStr = lastMonth.getFullYear()+'-'+(lastMonth.getMonth()+1<10?'0':'')+(lastMonth.getMonth()+1);
 
       memberData.forEach(function(m){
-        // 找出該會員的主要貨架位置
-        var memberPkgs = (pkgData||[]).filter(function(p){ return p.member_code === m.member_code && p.status === 'arrived'; });
+        // 找出該會員的主要貨架位置（★ 在庫 = 排除已出貨/已自取/運輸中）
+        var _doneStatuses = ['delivered','picked','transit','shipping'];
+        var memberPkgs = (pkgData||[]).filter(function(p){ return p.member_code === m.member_code && !_doneStatuses.includes(p.status); });
         var shelfList = memberPkgs.map(function(p){ return p.shelf; }).filter(function(s){ return s && s !== '—'; });
         var mainShelf = shelfList.length > 0 ? shelfList[0] : '—';
 
@@ -3769,9 +3772,10 @@ async function searchCustomerDB() {
       });
     }
 
-    // 包裹列表
+    // 包裹列表（★ 在庫 = 排除已出貨/已自取/運輸中，與客人端統一）
     var pkgs = pkgData || [];
-    var arrivedCount = pkgs.filter(function(p){return p.status==='arrived'}).length;
+    var completedStatuses = ['delivered','picked','transit','shipping'];
+    var arrivedCount = pkgs.filter(function(p){ return !completedStatuses.includes(p.status); }).length;
     var searchedCode = memberData && memberData.length > 0 ? memberData[0].member_code : code;
     html += '<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px">'
       + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">'
@@ -3822,7 +3826,7 @@ async function bulkChangeShelf(memberCode, count) {
   newShelf = newShelf.trim().toUpperCase();
   if(!confirm('確認將 ' + memberCode + ' 所有在庫包裹移至 📍 ' + newShelf + '？')) return;
   try {
-    var { error } = await sb.from('packages').update({ shelf: newShelf }).eq('member_code', memberCode).eq('status', 'arrived');
+    var { error } = await sb.from('packages').update({ shelf: newShelf }).eq('member_code', memberCode).in('status', ['arrived','checking','pointed','point_done','carried','wait_pickup','unclaimed']);
     if(error) { showToast('❌ 更新失敗：' + error.message, 'red'); return; }
     showToast('✅ ' + count + ' 件包裹已移至 📍 ' + newShelf, 'green');
     searchCustomerDB();
