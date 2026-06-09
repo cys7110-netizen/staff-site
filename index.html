@@ -2817,9 +2817,10 @@ function kstDateTimeStr(d, opts) {
 // ── 首頁統計 + Badge 更新（韓國時間 00:00 歸零）──
 function getKSTTodayRange() {
   var now = new Date();
-  // 韓國時間 = UTC+9
-  var kstMs = now.getTime() + (9 * 60 + now.getTimezoneOffset()) * 60000;
+  // ★ 永遠加 9 小時 = KST（不管瀏覽器在什麼時區都正確）
+  var kstMs = now.getTime() + 9 * 3600000;
   var kst = new Date(kstMs);
+  // kst 的 getUTC* 現在就是 KST 的年月日
   var start = new Date(Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate()) - 9 * 3600000);
   var end = new Date(start.getTime() + 24 * 3600000);
   return { start: start.toISOString(), end: end.toISOString() };
