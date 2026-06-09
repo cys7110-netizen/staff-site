@@ -1593,7 +1593,7 @@ async function claimUnclaimedPackage(pkg, memberCode) {
       autoShelf = info.dataset.shelf;
     } else {
       try {
-        var { data: shelfPkgs } = await sb.from('packages').select('shelf').eq('member_code', memberCode).eq('status','arrived').limit(1);
+        var { data: shelfPkgs } = await sb.from('packages').select('shelf').eq('member_code', memberCode).in('status',['arrived','checking','pointed','point_done','carried','wait_pickup','unclaimed']).limit(1);
         if(shelfPkgs && shelfPkgs.length > 0 && shelfPkgs[0].shelf) autoShelf = shelfPkgs[0].shelf;
       } catch(e){}
     }
@@ -2050,7 +2050,7 @@ async function autoFillShelfFromExisting(memberCode) {
   try {
     var { data: pkgs } = await sb.from('packages').select('shelf,status')
       .eq('member_code', memberCode)
-      .eq('status', 'arrived')
+      .in('status', ['arrived','checking','pointed','point_done','carried','wait_pickup','unclaimed'])
       .order('created_at', { ascending: false })
       .limit(50);
     if(!pkgs || pkgs.length === 0) return;
