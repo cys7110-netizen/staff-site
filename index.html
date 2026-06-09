@@ -1470,7 +1470,7 @@ async function renderUnclaimed() {
     var photoHtml = '';
     if(p.photos && p.photos.length > 0) {
       photoHtml = '<div style="display:flex;gap:6px;margin-top:6px">';
-      p.photos.forEach(function(url){ photoHtml += '<img src="'+url+'" style="width:48px;height:48px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer" onclick="window.open(\''+url+'\',\'_blank\')">'; });
+      p.photos.forEach(function(url, i){ photoHtml += '<img src="'+url+'" style="width:48px;height:48px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer" onclick="viewPhoto(\''+url+'\')">'; });
       photoHtml += '</div>';
     }
     card.innerHTML = '<div style="padding:12px 16px;background:rgba(220,60,60,0.05);border-bottom:1px solid rgba(220,60,60,0.12);display:flex;justify-content:space-between;align-items:center">'
@@ -1745,7 +1745,7 @@ function refreshAllStats() {
   }, 500);
 }
 
-// 2) 輪詢 fallback：每 30 秒自動刷新（Realtime 萬一斷線也不怕）
+// 2) 輪詢 fallback：每 10 秒自動刷新（確保數字即時更新）
 var _lastKSTDate = '';
 setInterval(function() {
   if(!sb) return;
@@ -1754,12 +1754,19 @@ setInterval(function() {
   var todayStr = range.start.slice(0, 10);
   if(_lastKSTDate && _lastKSTDate !== todayStr) {
     console.log('🌅 偵測到跨日！自動歸零');
-    // 更新日期顯示
     document.getElementById('scan-date').textContent = new Date().toLocaleDateString('zh-TW',{month:'2-digit',day:'2-digit',weekday:'short'});
   }
   _lastKSTDate = todayStr;
   refreshAllStats();
-}, 30000);
+}, 10000);
+
+// 3) 頁面重新可見時立即刷新（從其他 App 切回來）
+document.addEventListener('visibilitychange', function() {
+  if(!document.hidden && sb) {
+    console.log('👀 頁面重新可見，立即刷新統計');
+    refreshAllStats();
+  }
+});
 
 // 3) 啟動 Realtime（等 Supabase 初始化完成後）
 setTimeout(function() {
@@ -1811,28 +1818,39 @@ async function updateTodayCount() {
   if(!sb) return;
   try {
     var range = getKSTTodayRange();
-    // ★ 高效查詢：只計數 scanned_at 在今天範圍的包裹（不撈全部資料）
-    var { count, error } = await sb.from('packages')
-      .select('id', { count: 'exact', head: true })
+    // ★ 用 select('*') 搭配 count: 'exact', head: true 取得計數
+    var { count: c1, error: e1 } = await sb.from('packages')
+      .select('*', { count: 'exact', head: true })
       .gte('scanned_at', range.start)
       .lt('scanned_at', range.end);
-    if(error) {
-      console.error('updateTodayCount query error:', error.message);
-      // fallback：也查 created_at
-      var res2 = await sb.from('packages')
-        .select('id', { count: 'exact', head: true })
+
+    var finalCount = 0;
+    if(!e1 && typeof c1 === 'number') {
+      finalCount = c1;
+    } else {
+      // fallback：用 created_at 查
+      console.warn('scanned_at 查詢失敗，fallback 用 created_at:', e1 ? e1.message : '');
+      var { count: c2, error: e2 } = await sb.from('packages')
+        .select('*', { count: 'exact', head: true })
         .gte('created_at', range.start)
         .lt('created_at', range.end);
-      count = (res2 && !res2.error) ? res2.count : 0;
+      if(!e2 && typeof c2 === 'number') {
+        finalCount = c2;
+      }
     }
-    todayCount = count || 0;
+
+    todayCount = finalCount;
     console.log('📊 todayCount=' + todayCount + ' (range=' + range.start + '~' + range.end + ')');
   } catch(e) { console.error('updateTodayCount error:', e); }
+
+  // ★ 統一更新所有「今日入庫」相關 UI 元素
   var txt = '今日 ' + todayCount + ' 件';
   var el1 = document.getElementById('today-count');
   var el2 = document.getElementById('success-count');
+  var el3 = document.getElementById('stat-inbound');
   if(el1) el1.textContent = txt;
   if(el2) el2.textContent = txt;
+  if(el3) el3.textContent = todayCount;
 }
 
 // ── Camera ────────────────────────────────────────
@@ -2277,10 +2295,8 @@ async function confirmInbound() {
 
   // 從 Supabase 重新讀取今日入庫數（真實數據）
   await updateTodayCount();
-  // 即時 +1 更新首頁統計（不等待非同步查詢）
-  var statInEl = document.getElementById('stat-inbound');
-  if(statInEl) statInEl.textContent = parseInt(statInEl.textContent || '0') + 1;
-  loadDailyStats(); // 非同步完整刷新
+  // 非同步完整刷新首頁統計（loadDailyStats 也會同步 stat-inbound）
+  await loadDailyStats();
 
   // Add to recent
   recentScans.unshift({
@@ -2339,6 +2355,124 @@ function renderRecent() {
       + '<span class="recent-status s-done">已入庫</span>'
       + '</div>';
   }).join('');
+}
+
+// ── 照片燈箱（Lightbox）：頁面內全螢幕檢視，支援左右切換 ──
+var _lightboxUrls = [];
+var _lightboxIndex = 0;
+
+function viewPhoto(url) {
+  viewPhotoGallery([url], 0);
+}
+
+function viewPhotoGallery(urls, startIndex) {
+  if(!urls || urls.length === 0) return;
+  _lightboxUrls = urls.map(resolvePhotoUrl).filter(function(u){ return !!u; });
+  _lightboxIndex = startIndex || 0;
+  if(_lightboxUrls.length === 0) return;
+  _renderLightbox();
+}
+
+function _renderLightbox() {
+  // 移除舊的燈箱
+  var old = document.getElementById('photo-lightbox');
+  if(old) old.remove();
+
+  var url = _lightboxUrls[_lightboxIndex];
+  var total = _lightboxUrls.length;
+  var hasMultiple = total > 1;
+
+  var overlay = document.createElement('div');
+  overlay.id = 'photo-lightbox';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0;box-sizing:border-box;touch-action:pan-y';
+
+  // 頂部列：計數器 + 關閉按鈕
+  var topBar = document.createElement('div');
+  topBar.style.cssText = 'position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:12px 16px;z-index:2';
+  if(hasMultiple) {
+    var counter = document.createElement('div');
+    counter.style.cssText = 'color:white;font-size:14px;font-weight:600;background:rgba(0,0,0,0.4);padding:4px 12px;border-radius:12px';
+    counter.textContent = (_lightboxIndex+1) + ' / ' + total;
+    topBar.appendChild(counter);
+  } else {
+    topBar.appendChild(document.createElement('div'));
+  }
+  var closeBtn = document.createElement('button');
+  closeBtn.textContent = '✕';
+  closeBtn.style.cssText = 'background:rgba(255,255,255,0.15);border:none;color:white;width:40px;height:40px;border-radius:50%;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)';
+  closeBtn.onclick = function(){ overlay.remove(); };
+  topBar.appendChild(closeBtn);
+  overlay.appendChild(topBar);
+
+  // 圖片
+  var img = document.createElement('img');
+  img.src = url;
+  img.style.cssText = 'max-width:92vw;max-height:80vh;object-fit:contain;border-radius:8px;user-select:none;-webkit-user-select:none';
+  img.onerror = function(){ this.style.display='none'; var err=document.createElement('div'); err.style.cssText='color:#ff6b6b;font-size:15px;padding:20px'; err.textContent='⚠️ 照片載入失敗'; overlay.insertBefore(err, overlay.children[1]); };
+  overlay.appendChild(img);
+
+  // 左右導航箭頭（多張時才顯示）
+  if(hasMultiple) {
+    var prevBtn = document.createElement('button');
+    prevBtn.innerHTML = '‹';
+    prevBtn.style.cssText = 'position:absolute;left:8px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,0.15);border:none;color:white;width:44px;height:44px;border-radius:50%;font-size:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)';
+    prevBtn.onclick = function(e){ e.stopPropagation(); _lightboxIndex = (_lightboxIndex - 1 + total) % total; _renderLightbox(); };
+    overlay.appendChild(prevBtn);
+
+    var nextBtn = document.createElement('button');
+    nextBtn.innerHTML = '›';
+    nextBtn.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,0.15);border:none;color:white;width:44px;height:44px;border-radius:50%;font-size:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)';
+    nextBtn.onclick = function(e){ e.stopPropagation(); _lightboxIndex = (_lightboxIndex + 1) % total; _renderLightbox(); };
+    overlay.appendChild(nextBtn);
+  }
+
+  // 點擊背景關閉
+  overlay.addEventListener('click', function(e) {
+    if(e.target === overlay) overlay.remove();
+  });
+
+  // 手機觸控滑動支援
+  var touchStartX = 0;
+  overlay.addEventListener('touchstart', function(e) {
+    touchStartX = e.touches[0].clientX;
+  }, {passive: true});
+  overlay.addEventListener('touchend', function(e) {
+    if(!hasMultiple) return;
+    var diff = e.changedTouches[0].clientX - touchStartX;
+    if(Math.abs(diff) > 50) {
+      if(diff < 0) { _lightboxIndex = (_lightboxIndex + 1) % total; }
+      else { _lightboxIndex = (_lightboxIndex - 1 + total) % total; }
+      _renderLightbox();
+    }
+  }, {passive: true});
+
+  document.body.appendChild(overlay);
+}
+
+// ── Helper：安全解析 photo_urls（相容 JSON 字串 / 陣列 / null）──
+function parsePhotoUrls(raw) {
+  if(!raw) return [];
+  if(Array.isArray(raw)) return raw;
+  if(typeof raw === 'string') {
+    var trimmed = raw.trim();
+    if(trimmed.startsWith('[')) {
+      try { var arr = JSON.parse(trimmed); if(Array.isArray(arr)) return arr; } catch(e){}
+    }
+    if(trimmed.length > 0) return [trimmed];
+  }
+  return [];
+}
+
+// ── Helper：將 Storage 路徑補全為完整公開 URL ──
+function resolvePhotoUrl(url) {
+  if(!url || typeof url !== 'string') return '';
+  var u = url.trim();
+  if(u.startsWith('http://') || u.startsWith('https://') || u.startsWith('data:')) return u;
+  var base = SUPABASE_URL || 'https://zejkbveigebqiiwvosrd.supabase.co';
+  if(u.startsWith('package') || u.startsWith('photo') || u.startsWith('ship') || u.startsWith('inbound')) {
+    return base + '/storage/v1/object/public/' + u;
+  }
+  return base + '/storage/v1/object/public/package-photos/' + u;
 }
 
 // ── 圖片壓縮工具 ─────────────────────────────────
@@ -2555,40 +2689,40 @@ async function loadDailyStats() {
 
     // 1) 今日入庫數（scanned_at 在今天範圍）
     var { count: inboundCount } = await sb.from('packages')
-      .select('id', { count: 'exact', head: true })
+      .select('*', { count: 'exact', head: true })
       .gte('scanned_at', ds).lt('scanned_at', de);
 
     // 2) 無人包裹（全域，不限日期）
     var { count: unclaimedCount } = await sb.from('packages')
-      .select('id', { count: 'exact', head: true })
+      .select('*', { count: 'exact', head: true })
       .eq('status', 'unclaimed');
 
     // 3) 待出貨（task_type=ship, status=pending）
     var { count: pendingShipCount } = await sb.from('tasks')
-      .select('id', { count: 'exact', head: true })
+      .select('*', { count: 'exact', head: true })
       .eq('task_type', 'ship').eq('status', 'pending');
     // fallback: type 欄位
     if(!pendingShipCount) {
-      var r2 = await sb.from('tasks').select('id', { count: 'exact', head: true }).eq('type', 'ship').eq('status', 'pending');
+      var r2 = await sb.from('tasks').select('*', { count: 'exact', head: true }).eq('type', 'ship').eq('status', 'pending');
       if(r2.count) pendingShipCount = r2.count;
     }
 
     // 4) 今日已出貨
     var { count: shippedCount } = await sb.from('tasks')
-      .select('id', { count: 'exact', head: true })
+      .select('*', { count: 'exact', head: true })
       .eq('task_type', 'ship').in('status', ['completed','paid'])
       .gte('completed_at', ds).lt('completed_at', de);
     if(!shippedCount) {
-      var r3 = await sb.from('tasks').select('id', { count: 'exact', head: true }).eq('type', 'ship').in('status', ['completed','paid']).gte('completed_at', ds).lt('completed_at', de);
+      var r3 = await sb.from('tasks').select('*', { count: 'exact', head: true }).eq('type', 'ship').in('status', ['completed','paid']).gte('completed_at', ds).lt('completed_at', de);
       if(r3.count) shippedCount = r3.count;
     }
 
     // 5) 客人待處理申請（點貨/自取）
     var { count: pendingTaskCount } = await sb.from('tasks')
-      .select('id', { count: 'exact', head: true })
+      .select('*', { count: 'exact', head: true })
       .in('task_type', ['point','pickup']).eq('status', 'pending');
     if(!pendingTaskCount) {
-      var r4 = await sb.from('tasks').select('id', { count: 'exact', head: true }).in('type', ['point','pickup']).eq('status', 'pending');
+      var r4 = await sb.from('tasks').select('*', { count: 'exact', head: true }).in('type', ['point','pickup']).eq('status', 'pending');
       if(r4.count) pendingTaskCount = r4.count;
     }
 
@@ -2717,7 +2851,7 @@ async function renderShiplistFromDB() {
             + '<span style="font-size:11px;font-weight:600;color:var(--accent)">📍'+(p.shelf||'—')+'</span>';
           if(photos.length > 0) {
             photos.forEach(function(url){
-              html += '<img src="'+url+'" style="width:32px;height:32px;object-fit:cover;border-radius:4px;border:1px solid var(--border);cursor:pointer" onclick="window.open(\''+url+'\',\'_blank\')">';
+              html += '<img src="'+url+'" style="width:32px;height:32px;object-fit:cover;border-radius:4px;border:1px solid var(--border);cursor:pointer" onclick="viewPhoto(\''+url+'\')">';
             });
           }
           html += '</div>';
@@ -3044,11 +3178,13 @@ function openPkgDetailModal(idx) {
   // 渲染入庫照片
   var photosEl = document.getElementById('pkg-detail-photos');
   var photos = parsePhotoUrls(p.photo_urls);
+  // 預存已解析的 URL 供燈箱使用
+  window._detailPhotoUrls = photos.map(resolvePhotoUrl).filter(function(u){ return !!u; });
   if(photos.length > 0) {
     photosEl.innerHTML = photos.map(function(url, i) {
       var resolved = resolvePhotoUrl(url);
       return '<div style="position:relative">'
-        + '<img src="'+resolved+'" style="width:90px;height:90px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:pointer" onclick="window.open(\''+resolved+'\',\'_blank\')" onerror="this.parentElement.innerHTML=\'<div style=padding:8px;text-align:center;color:#999;font-size:11px>⚠️ 載入失敗</div>\'">'
+        + '<img src="'+resolved+'" style="width:90px;height:90px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:pointer" onclick="viewPhotoGallery(window._detailPhotoUrls,'+i+')" onerror="this.parentElement.innerHTML=\'<div style=padding:8px;text-align:center;color:#999;font-size:11px>⚠️ 載入失敗</div>\'">'
         + '<div style="position:absolute;bottom:2px;right:4px;background:rgba(0,0,0,0.5);color:white;font-size:10px;padding:1px 5px;border-radius:3px">'+(i+1)+'</div>'
         + '</div>';
     }).join('');
@@ -3302,7 +3438,7 @@ async function searchCustomerDB() {
         if(photos.length > 0) {
           html += '<div style="display:flex;gap:6px;margin-top:8px;overflow-x:auto">';
           photos.forEach(function(url){
-            html += '<img src="'+url+'" style="width:60px;height:60px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer" onclick="window.open(\''+url+'\',\'_blank\')">';
+            html += '<img src="'+url+'" style="width:60px;height:60px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer" onclick="viewPhoto(\''+url+'\')">';
           });
           html += '</div>';
         }
