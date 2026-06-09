@@ -1186,7 +1186,7 @@ async function doStaffLogin() {
     showToast('登入成功 ✅ · ' + currentStaffName,'green');
     setTimeout(function(){
       showScreen('screen-home');
-      document.getElementById('home-date').textContent = new Date().toLocaleDateString('zh-TW',{month:'2-digit',day:'2-digit',weekday:'short'});
+      document.getElementById('home-date').textContent = kstDate({month:'2-digit',day:'2-digit',weekday:'short'});
       var badge = document.getElementById('staff-badge');
       if(badge) badge.textContent = currentStaff + ' · ' + currentStaffName;
     }, 300);
@@ -1208,7 +1208,7 @@ function renderShiplist() {
   if(!cards) return;
   var dateEl = document.getElementById('shiplist-date');
   var cntEl = document.getElementById('shiplist-count');
-  if(dateEl) dateEl.textContent = new Date().toLocaleDateString('zh-TW');
+  if(dateEl) dateEl.textContent = kstDate();
   if(cntEl) cntEl.textContent = shipOrders.length;
 
   var pending = shipOrders.filter(function(o){ return o.status !== 'done'; });
@@ -1334,7 +1334,7 @@ function confirmPackDone() {
   order.status = 'done';
   order.packPhoto = packPhoto;
   order.packedBy = currentStaff;
-  order.packedTime = new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
+  order.packedTime = kstTime({hour:'2-digit',minute:'2-digit'});
   document.getElementById('pack-modal').classList.remove('open');
   showToast('✅ ' + order.member + ' 包裝完成 · ' + currentStaff, 'green');
   renderShiplist();
@@ -1414,7 +1414,7 @@ function renderPointlist() {
 function completeRequest(id, action) {
   if(action === 'done') {
     r.completedBy = currentStaff;
-    r.completedTime = new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
+    r.completedTime = kstTime({hour:'2-digit',minute:'2-digit'});
     showToast('已完成 · ' + currentStaff + ' ✅','green');
   } else {
     showToast('已暫緩處理 · ' + currentStaff);
@@ -1446,7 +1446,7 @@ async function renderUnclaimed() {
           return {
             id: p.id,
             trackNo: p.tracking_no || '不明',
-            date: p.created_at ? new Date(p.created_at).toLocaleDateString('zh-TW',{month:'2-digit',day:'2-digit'}) : '—',
+            date: p.created_at ? kstDateStr(p.created_at,{month:'2-digit',day:'2-digit'}) : '—',
             weight: p.weight_kg || 0,
             shelf: p.shelf || '—',
             photos: p.photo_urls || [],
@@ -1636,7 +1636,7 @@ function addUnclaimedManual() {
       renderUnclaimed();
     });
   } else {
-    unclaimedPkgs.push({id:'U'+Date.now(), trackNo:track, date:new Date().toLocaleDateString('zh-TW',{month:'2-digit',day:'2-digit'}), note:note});
+    unclaimedPkgs.push({id:'U'+Date.now(), trackNo:track, date:kstDate({month:'2-digit',day:'2-digit'}), note:note});
     showToast('已新增無人包裹','green');
     renderUnclaimed();
   }
@@ -1713,7 +1713,7 @@ function showBatchSuccess(trackNo, weight) {
 
 // ── Init ─────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function(){
-  document.getElementById('scan-date').textContent = new Date().toLocaleDateString('zh-TW',{month:'2-digit',day:'2-digit',weekday:'short'});
+  document.getElementById('scan-date').textContent = kstDate({month:'2-digit',day:'2-digit',weekday:'short'});
   updateTodayCount();
   renderRecent();
 
@@ -1776,7 +1776,7 @@ setInterval(function() {
   var todayStr = range.start.slice(0, 10);
   if(_lastKSTDate && _lastKSTDate !== todayStr) {
     console.log('🌅 偵測到跨日！自動歸零');
-    document.getElementById('scan-date').textContent = new Date().toLocaleDateString('zh-TW',{month:'2-digit',day:'2-digit',weekday:'short'});
+    document.getElementById('scan-date').textContent = kstDate({month:'2-digit',day:'2-digit',weekday:'short'});
   }
   _lastKSTDate = todayStr;
   refreshAllStats();
@@ -2137,7 +2137,7 @@ function renderDetailScreen(pkg) {
   // Track info
   document.getElementById('detail-track-top').textContent = pkg.trackNo;
   document.getElementById('d-track').textContent = pkg.trackNo;
-  document.getElementById('d-date').textContent = new Date().toLocaleDateString('zh-TW');
+  document.getElementById('d-date').textContent = kstDate();
   document.getElementById('d-note').textContent = pkg.note || '（無備註）';
 
   // Status banner
@@ -2356,7 +2356,7 @@ async function confirmInbound() {
     currentPkg.memberCode = null;
     currentPkg.status = 'unclaimed';
     // Add to unclaimed list
-    var today = new Date().toLocaleDateString('zh-TW',{month:'2-digit',day:'2-digit'}).replace('/','/');
+    var today = kstDate({month:'2-digit',day:'2-digit'}).replace('/','/');
     var unclaimedNote = document.getElementById('inbound-note').value || '無法對應會員';
     var exists = unclaimedPkgs.find(function(u){ return u.trackNo === currentPkg.trackNo; });
     if(!exists) unclaimedPkgs.push({id:'U'+Date.now(), trackNo:currentPkg.trackNo, date:today, note:unclaimedNote});
@@ -2369,11 +2369,11 @@ async function confirmInbound() {
   currentPkg.shelf = shelf;
   currentPkg.photos = [...uploadedPhotos];
   currentPkg.note = note;
-  currentPkg.arrivedDate = new Date().toLocaleDateString('zh-TW');
+  currentPkg.arrivedDate = kstDate();
 
   // Log staff action
   currentPkg.inboundBy = currentStaff;
-  currentPkg.inboundTime = new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
+  currentPkg.inboundTime = kstTime({hour:'2-digit',minute:'2-digit'});
 
   // 顯示上傳中（按鈕禁用）
   var confirmBtn = document.querySelector('.btn-confirm');
@@ -2415,7 +2415,7 @@ async function confirmInbound() {
     trackNo: currentPkg.trackNo,
     memberCode: currentPkg.memberCode,
     weight: weight,
-    time: new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'}),
+    time: kstTime({hour:'2-digit',minute:'2-digit'}),
     status: 'arrived'
   });
   recentScans = recentScans.slice(0,8);
@@ -2443,7 +2443,7 @@ async function confirmInbound() {
     + '重量：<strong>'+parseFloat(weight).toFixed(2)+' kg</strong><br>'
     + '貨架：<strong>'+(currentPkg.shelf||'—')+'</strong><br>'
     + '照片：<strong>'+uploadedPhotos.length+'</strong> 張'+(uploadedPhotos.length > 0 ? ' ✅ 已上傳':'')+'<br>'
-    + '時間：<strong>'+new Date().toLocaleTimeString('zh-TW')+'</strong><br>'
+    + '時間：<strong>'+kstTime()+'</strong><br>'
     + '入庫人員：<strong style="color:var(--accent)">'+currentStaff+'</strong>';
 
   // 無人包裹標記
@@ -2714,7 +2714,7 @@ function renderTaskList() {
   el.innerHTML = filtered.map(function(t){
     var icon = typeIcon[t.task_type] || '📋';
     var label = typeLabel[t.task_type] || t.task_type;
-    var date = t.created_at ? new Date(t.created_at).toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+    var date = t.created_at ? kstDateTimeStr(t.created_at,{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
     var html = '<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;position:relative">'
       + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
       + '<span style="font-size:20px">'+icon+'</span>'
@@ -2775,6 +2775,28 @@ async function completeTask(taskId) {
     loadPendingTicker();
     renderPointlistFromDB();
   } catch(e) { console.error(e); }
+}
+
+// ── 韓國時間格式化工具（確保所有顯示都是 KST）──
+function kstDate(opts) {
+  var o = Object.assign({}, opts || {});
+  o.timeZone = 'Asia/Seoul';
+  return new Date().toLocaleDateString('zh-TW', o);
+}
+function kstTime(opts) {
+  var o = Object.assign({}, opts || {});
+  o.timeZone = 'Asia/Seoul';
+  return new Date().toLocaleTimeString('zh-TW', o);
+}
+function kstDateStr(d, opts) {
+  var o = Object.assign({}, opts || {});
+  o.timeZone = 'Asia/Seoul';
+  return new Date(d).toLocaleDateString('zh-TW', o);
+}
+function kstDateTimeStr(d, opts) {
+  var o = Object.assign({}, opts || {});
+  o.timeZone = 'Asia/Seoul';
+  return new Date(d).toLocaleString('zh-TW', o);
 }
 
 // ── 首頁統計 + Badge 更新（韓國時間 00:00 歸零）──
@@ -2914,7 +2936,7 @@ async function renderShiplistFromDB() {
     if(cntEl) cntEl.textContent = data.filter(function(t){return t.status==='pending'}).length;
 
     cards.innerHTML = data.map(function(t){
-      var date = t.created_at ? new Date(t.created_at).toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+      var date = t.created_at ? kstDateTimeStr(t.created_at,{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
       var isDone = t.status === 'completed';
       var cardBg = isDone ? 'rgba(0,0,0,0.03)' : 'var(--card)';
       var cardBorder = isDone ? 'rgba(0,0,0,0.08)' : 'var(--border)';
@@ -3278,7 +3300,7 @@ async function renderPointlistFromDB() {
 
     var typeIcon = {point:'🔍 點貨',pickup:'🏪 自取'};
     cards.innerHTML = finalData.map(function(t){
-      var date = t.created_at ? new Date(t.created_at).toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+      var date = t.created_at ? kstDateTimeStr(t.created_at,{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
       var isDone = t.status === 'completed';
       var tType = t.task_type || t.type || '';
       var cardBg = isDone ? 'rgba(0,0,0,0.02)' : 'var(--card)';
@@ -3464,7 +3486,7 @@ var _statusMap = {arrived:'已到庫',checking:'點貨中',point_done:'點貨完
 
 // ── 共用：渲染單一包裹卡片（可點擊開啟詳情）──
 function renderPkgCard(p, idx) {
-  var entryDate = p.scanned_at ? new Date(p.scanned_at).toLocaleDateString('zh-TW') : (p.created_at ? new Date(p.created_at).toLocaleDateString('zh-TW') : '—');
+  var entryDate = p.scanned_at ? kstDateStr(p.scanned_at) : (p.created_at ? kstDateStr(p.created_at) : '—');
   var photos = parsePhotoUrls(p.photo_urls);
   var photoCount = photos.length > 0 ? ' · 📷'+photos.length+'張' : '';
   var statusColor = p.status==='arrived' ? 'rgba(27,79,138,0.1);color:var(--accent)' : (p.status==='unclaimed' ? 'rgba(220,60,60,0.1);color:var(--red)' : 'rgba(40,180,100,0.1);color:#1a8050');
@@ -3494,7 +3516,7 @@ function openPkgDetailModal(idx) {
   // 填入唯讀資料
   document.getElementById('pkg-detail-tracking').textContent = p.tracking_no || '—';
   document.getElementById('pkg-detail-status').innerHTML = '<span style="padding:4px 12px;border-radius:6px;background:rgba(27,79,138,0.1);color:var(--accent);font-weight:600;font-size:13px">' + (_statusMap[p.status]||p.status||'—') + '</span>';
-  var entryDate = p.scanned_at ? new Date(p.scanned_at).toLocaleString('zh-TW') : (p.created_at ? new Date(p.created_at).toLocaleString('zh-TW') : '—');
+  var entryDate = p.scanned_at ? kstDateTimeStr(p.scanned_at,{}) : (p.created_at ? kstDateTimeStr(p.created_at,{}) : '—');
   document.getElementById('pkg-detail-time').textContent = entryDate + (p.processed_by_name ? ' · ' + p.processed_by_name : '');
 
   // 填入可編輯欄位
@@ -3748,7 +3770,7 @@ async function searchCustomerDB() {
       html += '<div style="text-align:center;padding:20px;color:var(--text3)">此會員無包裹記錄</div>';
     } else {
       pkgs.forEach(function(p){
-        var entryDate = p.scanned_at ? new Date(p.scanned_at).toLocaleDateString('zh-TW') : (p.created_at ? new Date(p.created_at).toLocaleDateString('zh-TW') : '—');
+        var entryDate = p.scanned_at ? kstDateStr(p.scanned_at) : (p.created_at ? kstDateStr(p.created_at) : '—');
         var photos = p.photo_urls || [];
         var statusColor = p.status==='arrived' ? 'rgba(27,79,138,0.1);color:var(--accent)' : (p.status==='unclaimed' ? 'rgba(220,60,60,0.1);color:var(--red)' : 'rgba(40,180,100,0.1);color:#1a8050');
         html += '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px">'
@@ -3780,7 +3802,7 @@ async function searchCustomerDB() {
 
 // ── 一鍵更換貨架位置 ──
 async function bulkChangeShelf(memberCode, count) {
-  var newShelf = prompt('將 ' + memberCode + ' 的 ' + count + ' 件在庫包裹全部移至新貨架：\n\n請輸入新貨架位置（例：A3、B2）');
+  var newShelf = prompt('將 ' + memberCode + ' 的 ' + count + ' 件在庫包裹全部移至新貨架：\n\n請輸入新貨架位置（例：A中5、B下7）');
   if(!newShelf || !newShelf.trim()) return;
   newShelf = newShelf.trim().toUpperCase();
   if(!confirm('確認將 ' + memberCode + ' 所有在庫包裹移至 📍 ' + newShelf + '？')) return;
