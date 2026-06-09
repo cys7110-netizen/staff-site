@@ -1760,10 +1760,7 @@ function refreshAllStats() {
   if(_refreshTimer) clearTimeout(_refreshTimer);
   _refreshTimer = setTimeout(async function() {
     await updateTodayCount();
-    if(document.getElementById('screen-home') &&
-       document.getElementById('screen-home').classList.contains('active')) {
-      await loadDailyStats();
-    }
+    await loadDailyStats();
   }, 500);
 }
 
@@ -2054,45 +2051,62 @@ async function autoFillShelfFromExisting(memberCode) {
       .eq('member_code', memberCode)
       .eq('status', 'arrived')
       .order('created_at', { ascending: false })
-      .limit(20);
+      .limit(50);
     if(!pkgs || pkgs.length === 0) return;
 
-    // 找到最常用的貨架位置
+    // 找到所有不同的貨架位置
     var shelfList = pkgs.map(function(p){ return p.shelf; }).filter(function(s){ return s && s !== '—' && s.trim(); });
     if(shelfList.length === 0) return;
 
+    var uniqueShelves = [...new Set(shelfList)];
     var mainShelf = shelfList[0]; // 最新的貨架位置
 
-    // 拆解貨架位置（例：A中 → letter=A, pos=中）
-    var letter = mainShelf.charAt(0).toUpperCase();
-    var pos = mainShelf.length > 1 ? mainShelf.substring(1) : '';
-
-    // 自動填入貨架選擇器
-    var letterEl = document.getElementById('shelf-letter');
-    var posEl = document.getElementById('shelf-pos-select');
-    var resultEl = document.getElementById('shelf-result');
-    var manualEl = document.getElementById('shelf-manual');
-
-    if(letterEl && letter >= 'A' && letter <= 'Z') {
-      letterEl.value = letter;
+    // ★ 防呆：如果同一客人有不同貨架位置，跳確認
+    if(uniqueShelves.length > 1) {
+      var shelfInfo = uniqueShelves.map(function(s){
+        var cnt = shelfList.filter(function(x){return x===s}).length;
+        return s + '(' + cnt + '件)';
+      }).join('、');
+      var useShelf = confirm('⚠️ 此客人有包裹在不同位置：\n\n' + shelfInfo + '\n\n確定使用「' + mainShelf + '」嗎？\n\n按「確定」使用 ' + mainShelf + '\n按「取消」自行輸入');
+      if(!useShelf) {
+        var customShelf = prompt('請輸入新貨架位置（例：A中、B下）');
+        if(customShelf && customShelf.trim()) {
+          mainShelf = customShelf.trim().toUpperCase();
+        } else {
+          return; // 取消不帶入
+        }
+      }
     }
-    if(posEl && ['上','中','下'].indexOf(pos) >= 0) {
-      posEl.value = pos;
-    }
-    if(resultEl) resultEl.textContent = mainShelf;
-    if(manualEl) manualEl.value = '';
 
-    // 顯示在庫資訊提示
-    var infoMsg = '📍 已自動帶入貨架：' + mainShelf + '（在庫 ' + pkgs.length + ' 件）';
-    showToast(infoMsg, 'green');
+    // ★ 核心：拆解貨架值，同步設定所有 UI 元素
+    applyShelfToUI(mainShelf);
 
-    // ★ 如果在庫數多，提供一鍵更換貨架的提示
-    if(pkgs.length >= 5) {
-      setTimeout(function(){
-        showToast('💡 此客人已有 ' + pkgs.length + ' 件在庫，如需換貨架請到「客戶搜尋」一鍵更換', 'orange');
-      }, 2000);
-    }
+    showToast('📍 已自動帶入貨架：' + mainShelf + '（在庫 ' + pkgs.length + ' 件）', 'green');
   } catch(e) { console.error('autoFillShelf error:', e); }
+}
+
+// ★ 將貨架值完整套用到所有 UI 元素（下拉選單 + 結果 + 手動輸入 + 全域變數）
+function applyShelfToUI(val) {
+  if(!val) return;
+  var letter = val.charAt(0).toUpperCase();
+  var pos = val.length > 1 ? val.substring(1) : '';
+
+  var letterEl = document.getElementById('shelf-letter');
+  var posEl = document.getElementById('shelf-pos-select');
+  var resultEl = document.getElementById('shelf-result');
+  var manualEl = document.getElementById('shelf-manual');
+
+  // 1) 貨架字母下拉
+  if(letterEl && letter >= 'A' && letter <= 'Z') letterEl.value = letter;
+  // 2) 層架下拉 + 同步全域 shelfPos
+  if(posEl && ['上','中','下'].indexOf(pos) >= 0) {
+    posEl.value = pos;
+    shelfPos = pos;
+  }
+  // 3) 結果顯示
+  if(resultEl) resultEl.textContent = val;
+  // 4) 手動輸入欄（getShelfValue 優先讀取此欄位）
+  if(manualEl) manualEl.value = val;
 }
 
 function toggleUnclaimed(checked) {
@@ -2971,25 +2985,24 @@ async function renderShiplistFromDB() {
         html += '<div style="font-size:11px;color:var(--red);background:rgba(220,60,60,0.05);border:1px solid rgba(220,60,60,0.15);border-radius:6px;padding:8px 10px;margin-bottom:8px;line-height:1.5">⚠️ 備註：'+notes+'</div>';
       }
 
-      // 出貨包裹（只顯示指定單號）
+      // 出貨包裹（★ 簡化版：只顯示單號 + 在庫摘要）
       if(shipPkgs.length > 0) {
-        html += '<div style="background:rgba(27,79,138,0.04);border:1px solid rgba(27,79,138,0.1);border-radius:6px;padding:10px;margin-bottom:8px">'
-          + '<div style="font-size:11px;font-weight:600;color:var(--accent);margin-bottom:6px">📦 出貨包裹 '+shipPkgs.length+' 件'
-          + (remainPkgs.length > 0 ? '<span style="color:var(--text3);font-weight:400;margin-left:8px">（客人剩餘 '+remainPkgs.length+' 件在庫）</span>' : '')
-          + '</div>';
+        html += '<div style="background:rgba(27,79,138,0.04);border:1px solid rgba(27,79,138,0.1);border-radius:6px;padding:10px;margin-bottom:8px">';
+        // 出貨單號（每行一個）
         shipPkgs.forEach(function(p){
-          var photos = p.photo_urls || [];
-          html += '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(27,79,138,0.08);flex-wrap:wrap">'
-            + '<span style="font-family:monospace;font-size:11px;min-width:120px">'+(p.tracking_no||'')+'</span>'
-            + '<span style="font-size:11px;color:var(--text3)">'+(p.weight_kg||0)+'kg</span>'
-            + '<span style="font-size:11px;font-weight:600;color:var(--accent)">📍'+(p.shelf||'—')+'</span>';
-          if(photos.length > 0) {
-            photos.forEach(function(url){
-              html += '<img src="'+url+'" style="width:32px;height:32px;object-fit:cover;border-radius:4px;border:1px solid var(--border);cursor:pointer" onclick="viewPhoto(\''+url+'\')">';
-            });
-          }
-          html += '</div>';
+          html += '<div style="font-family:monospace;font-size:12px;padding:2px 0;color:var(--text)">📦 '+(p.tracking_no||'')+'</div>';
         });
+        // 客人在庫包裹摘要（含貨架位置）
+        var shelfPositions = {};
+        remainPkgs.forEach(function(p){ if(p.shelf) shelfPositions[p.shelf] = (shelfPositions[p.shelf]||0)+1; });
+        var shelfSummary = Object.keys(shelfPositions).map(function(s){ return '📍'+s+'('+shelfPositions[s]+')'; }).join(' ');
+        if(!shelfSummary && allPkgs.length > 0) {
+          var anyShelf = allPkgs.find(function(p){ return p.shelf; });
+          if(anyShelf) shelfSummary = '📍'+anyShelf.shelf;
+        }
+        if(remainPkgs.length > 0) {
+          html += '<div style="font-size:12px;color:var(--text2);margin-top:6px;padding-top:6px;border-top:1px dashed rgba(27,79,138,0.15)">📦 客人在庫包裹（<strong>'+remainPkgs.length+'</strong> 件）'+(shelfSummary ? ' '+shelfSummary : '')+'</div>';
+        }
         html += '</div>';
       }
 
@@ -3258,8 +3271,10 @@ async function confirmShipPacking(taskId) {
       });
     }
 
-    // 背景重新載入完整資料
-    setTimeout(function(){ renderShiplistFromDB(); loadDailyStats(); }, 1000);
+    // 背景重新載入完整資料（多次刷新確保儀表板數字即時更新）
+    loadDailyStats();
+    renderShiplistFromDB();
+    setTimeout(function(){ loadDailyStats(); }, 2000);
   } catch(e) { console.error(e); showToast('操作失敗','red'); }
 }
 
@@ -3802,7 +3817,7 @@ async function searchCustomerDB() {
 
 // ── 一鍵更換貨架位置 ──
 async function bulkChangeShelf(memberCode, count) {
-  var newShelf = prompt('將 ' + memberCode + ' 的 ' + count + ' 件在庫包裹全部移至新貨架：\n\n請輸入新貨架位置（例：A中5、B下7）');
+  var newShelf = prompt('將 ' + memberCode + ' 的 ' + count + ' 件在庫包裹全部移至新貨架：\n\n請輸入新貨架位置（例：A中、B下）');
   if(!newShelf || !newShelf.trim()) return;
   newShelf = newShelf.trim().toUpperCase();
   if(!confirm('確認將 ' + memberCode + ' 所有在庫包裹移至 📍 ' + newShelf + '？')) return;
