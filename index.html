@@ -667,7 +667,7 @@ input[type=file] { display:none; }
           <input id="member-code-input" placeholder="輸入會員代號（5碼數字）"
             style="flex:1;background:var(--bg);border:1.5px solid var(--border);color:var(--text);font-size:15px;font-weight:700;padding:8px 12px;border-radius:8px;outline:none;letter-spacing:1px;min-width:0"
             oninput="lookupMemberCode(this.value.toUpperCase());this.value=this.value.toUpperCase()">
-          <button onclick="lookupMemberCode(document.getElementById('member-code-input').value.toUpperCase())"
+          <button onclick="confirmMemberCode()"
             style="background:var(--accent);border:none;color:white;font-size:13px;font-weight:600;padding:8px 14px;border-radius:8px;cursor:pointer;white-space:nowrap;flex-shrink:0">確認</button>
         </div>
       </div>
@@ -1958,17 +1958,35 @@ function stopCamera() {
 }
 
 // ── Member Code Lookup ───────────────────────────
-async function lookupMemberCode(code) {
-  if(!code || code.length < 3) return;
-  var avatar = document.getElementById('member-avatar');
+// ★ 防抖計時器
+var _memberLookupTimer = null;
+
+// ★ 打字中觸發（oninput）：靜默查詢，不跳 alert，等打滿 5 碼才查
+function lookupMemberCode(code) {
+  clearTimeout(_memberLookupTimer);
+  if(!code || code.trim().length < 5) return; // 不到 5 碼不查
+  // 延遲 400ms 等使用者打完再查（防抖）
+  _memberLookupTimer = setTimeout(function(){
+    _doMemberLookup(code.trim().toUpperCase(), false);
+  }, 400);
+}
+
+// ★ 按「確認」按鈕觸發：立即查詢 + 查無會跳警告
+function confirmMemberCode() {
+  clearTimeout(_memberLookupTimer);
+  var input = document.getElementById('member-code-input');
+  var code = input ? input.value.trim().toUpperCase() : '';
+  if(!code) { showToast('請輸入會員代號'); return; }
+  _doMemberLookup(code, true); // true = 查無時跳警告
+}
+
+// ★ 核心查詢邏輯（showAlert: 是否在查無時跳 alert）
+async function _doMemberLookup(code, showAlert) {
   var name = document.getElementById('member-name');
   var email = document.getElementById('member-email');
   var input = document.getElementById('member-code-input');
   var isUnclaimed = document.getElementById('is-unclaimed');
 
-  code = code.trim().toUpperCase();
-
-  // 直接用輸入的代號查詢（不再自動補 HJ）
   var codesToTry = [code];
 
   // === 1) 先查本地快取 ===
@@ -1982,7 +2000,6 @@ async function lookupMemberCode(code) {
       if(currentPkg) currentPkg.memberCode = matchedCode;
       if(input) input.value = matchedCode;
       showToast('✅ 找到會員：'+member.name, 'green');
-      // ★ 自動帶入貨架位置
       autoFillShelfFromExisting(matchedCode);
       return;
     }
@@ -2010,21 +2027,22 @@ async function lookupMemberCode(code) {
         if(currentPkg) currentPkg.memberCode = matchedCode;
         if(input) input.value = matchedCode;
         showToast('✅ 找到會員：'+(sbMember.name || matchedCode), 'green');
-        // ★ 自動帶入貨架位置
         autoFillShelfFromExisting(matchedCode);
         return;
       }
     } catch(e) { console.error('Supabase member lookup error:', e); }
 
-    // === 3) ★ 查無此代號 → 防呆：自動標無人包裹 + 跳警告 ===
+    // === 3) 查無此代號 ===
     if(name) name.textContent = '⚠️ 查無此會員';
     if(email) email.textContent = code;
-    if(isUnclaimed) isUnclaimed.checked = true;
-    if(currentPkg) currentPkg.memberCode = null;
-    toggleUnclaimed(true); // 自動標記為無人包裹
 
-    // ★ 跳出明顯的警告視窗
-    alert('⚠️ 查無會員代號：' + code + '\n\n已自動標記為「無人包裹」。\n\n如果代號輸入正確，請聯繫管理員新增此會員。');
+    // ★ 只有按「確認」才跳 alert + 自動標無人包裹
+    if(showAlert) {
+      if(isUnclaimed) isUnclaimed.checked = true;
+      if(currentPkg) currentPkg.memberCode = null;
+      toggleUnclaimed(true);
+      alert('⚠️ 查無會員代號：' + code + '\n\n已自動標記為「無人包裹」。\n\n如果代號輸入正確，請聯繫管理員新增此會員。');
+    }
   }
 }
 
@@ -3233,12 +3251,11 @@ async function renderPointlistFromDB() {
       .from('tasks')
       .select('*')
       .in('task_type', ['point','pickup'])
-      .eq('status', 'pending')
+      .in('status', ['pending','completed'])
       .order('created_at', { ascending: false });
-    // fallback: 用 type 欄位
     var finalData = data;
     if((!data || data.length === 0) && !error) {
-      var res2 = await sb.from('tasks').select('*').in('type', ['point','pickup']).eq('status', 'pending').order('created_at', { ascending: false });
+      var res2 = await sb.from('tasks').select('*').in('type', ['point','pickup']).in('status', ['pending','completed']).order('created_at', { ascending: false });
       if(res2.data && res2.data.length > 0) finalData = res2.data;
     }
     if(!finalData) finalData = data;
@@ -3247,18 +3264,196 @@ async function renderPointlistFromDB() {
       cards.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3);font-size:13px">目前沒有待處理的點貨/自取申請</div>';
       return;
     }
+
+    // 批次查詢所有會員的包裹
+    var memberCodes = [...new Set(finalData.filter(function(t){return t.member_code}).map(function(t){return t.member_code}))];
+    var memberPkgMap = {};
+    if(memberCodes.length > 0) {
+      var { data: pkgRows } = await sb.from('packages').select('*').in('member_code', memberCodes).eq('status','arrived').order('created_at',{ascending:false});
+      (pkgRows||[]).forEach(function(p){
+        if(!memberPkgMap[p.member_code]) memberPkgMap[p.member_code] = [];
+        memberPkgMap[p.member_code].push(p);
+      });
+    }
+
     var typeIcon = {point:'🔍 點貨',pickup:'🏪 自取'};
     cards.innerHTML = finalData.map(function(t){
       var date = t.created_at ? new Date(t.created_at).toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
-      return '<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px">'
+      var isDone = t.status === 'completed';
+      var tType = t.task_type || t.type || '';
+      var cardBg = isDone ? 'rgba(0,0,0,0.02)' : 'var(--card)';
+      var opacity = isDone ? '0.65' : '1';
+      var memberPkgs = memberPkgMap[t.member_code] || [];
+
+      // 解析申請的包裹單號
+      var reqMatch = t.details ? t.details.match(/包裹[：:]\s*(.+?)(\n|$)/) : null;
+      var reqTrackNos = reqMatch ? reqMatch[1].split(/[,，、\s]+/).map(function(s){return s.trim()}).filter(Boolean) : [];
+
+      var html = '<div style="background:'+cardBg+';border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px;opacity:'+opacity+'">'
+        // 標題列
         + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
-        + '<div><span style="font-weight:700">'+(typeIcon[t.task_type]||'')+' '+t.title+'</span><br><span style="font-size:11px;color:var(--text3)">'+(t.member_code||'')+'  ·  '+date+'</span></div>'
-        + '<button onclick="completeTask(\''+t.id+'\')" style="background:var(--green);border:none;color:white;padding:6px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">✓ 完成</button>'
-        + '</div>'
-        + (t.details ? '<div style="font-size:12px;color:var(--text2);background:var(--bg);border-radius:6px;padding:10px;line-height:1.7;white-space:pre-line">'+t.details+'</div>' : '')
+        + '<div><span style="font-weight:700;font-size:14px">'+(isDone?'✅':'')+(typeIcon[tType]||'')+' '+t.title+'</span>'
+        + '<br><span style="font-size:12px;color:var(--text3);font-weight:600">'+(t.member_code||'—')+'</span>'
+        + '<span style="font-size:11px;color:var(--text3);margin-left:8px">'+date+'</span></div>'
+        + (isDone ? '<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:rgba(40,180,100,0.1);color:var(--green);font-weight:600">已完成</span>' : '')
         + '</div>';
+
+      // 客人需求明細
+      if(t.details) {
+        html += '<div style="font-size:12px;color:var(--text2);background:var(--bg);border-radius:6px;padding:10px;line-height:1.7;white-space:pre-line;margin-bottom:8px">'+t.details+'</div>';
+      }
+
+      // ★ 包裹明細表格
+      if(memberPkgs.length > 0 && !isDone) {
+        html += '<div style="background:rgba(27,79,138,0.04);border:1px solid rgba(27,79,138,0.1);border-radius:6px;padding:10px;margin-bottom:8px">'
+          + '<div style="font-size:11px;font-weight:600;color:var(--accent);margin-bottom:6px">📦 客人在庫包裹（' + memberPkgs.length + ' 件）</div>';
+        memberPkgs.forEach(function(p){
+          var isRequested = reqTrackNos.includes(p.tracking_no);
+          html += '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(27,79,138,0.08);flex-wrap:wrap;'+(isRequested?'background:rgba(27,79,138,0.06);border-radius:4px;padding:6px 4px;':'') +'">'
+            + (isRequested ? '<span style="font-size:10px;color:white;background:var(--accent);padding:1px 6px;border-radius:3px;font-weight:600">申請</span>' : '')
+            + '<span style="font-family:monospace;font-size:11px;min-width:100px">'+(p.tracking_no||'')+'</span>'
+            + '<span style="font-size:11px;color:var(--text3)">'+(p.weight_kg||0)+'kg</span>'
+            + '<span style="font-size:11px;font-weight:600;color:var(--accent)">📍'+(p.shelf||'—')+'</span>'
+            + '</div>';
+        });
+        html += '</div>';
+      }
+
+      // ★ 未完成：拍照 + 完成/取消按鈕
+      if(!isDone) {
+        html += '<div style="background:rgba(40,180,100,0.04);border:1px solid rgba(40,180,100,0.15);border-radius:8px;padding:12px;margin-top:6px">'
+          + '<div style="font-size:12px;font-weight:700;color:var(--green);margin-bottom:8px">📷 ' + (tType==='point'?'點貨':'自取') + '照片（完成時上傳）</div>'
+          + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">'
+          + '<input id="point-photo-'+t.id+'" type="file" accept="image/*" capture="environment" style="display:none" onchange="previewPointPhoto(\''+t.id+'\',this)">'
+          + '<button onclick="document.getElementById(\'point-photo-'+t.id+'\').click()" style="background:var(--accent);border:none;color:white;padding:10px 18px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">📷 拍照</button>'
+          + '<span id="point-photo-name-'+t.id+'" style="font-size:11px;color:var(--text3)">尚未拍照</span>'
+          + '</div>'
+          + '<div id="point-photo-preview-'+t.id+'" style="display:none;margin-bottom:8px"></div>'
+          + '<div style="display:flex;gap:8px">'
+          + '<button onclick="completePointTask(\''+t.id+'\')" style="flex:3;background:var(--green);border:none;color:white;padding:12px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">✅ 完成</button>'
+          + '<button onclick="cancelPointTask(\''+t.id+'\')" style="flex:1;background:rgba(220,60,60,0.08);border:1.5px solid rgba(220,60,60,0.25);color:var(--red);padding:12px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">取消</button>'
+          + '</div>'
+          + '</div>';
+      }
+
+      // ★ 已完成：顯示完成照片
+      if(isDone) {
+        html += '<div style="background:rgba(40,180,100,0.05);border:1px solid rgba(40,180,100,0.15);border-radius:6px;padding:10px;margin-top:6px">'
+          + '<div style="font-size:12px;font-weight:600;color:var(--green);margin-bottom:4px">✅ 已完成' + (t.completed_by_name ? ' · ' + t.completed_by_name : '') + '</div>';
+        if(t.ship_photo) {
+          var resolved = resolvePhotoUrl(t.ship_photo);
+          html += '<img src="'+resolved+'" style="width:100%;max-height:200px;object-fit:cover;border-radius:6px;margin-top:6px;cursor:pointer" onclick="viewPhoto(\''+resolved+'\')">';
+        }
+        html += '</div>';
+      }
+
+      html += '</div>';
+      return html;
     }).join('');
   } catch(e) { console.error(e); }
+}
+
+// ── 點貨照片預覽 ──
+function previewPointPhoto(taskId, input) {
+  var preview = document.getElementById('point-photo-preview-' + taskId);
+  var nameEl = document.getElementById('point-photo-name-' + taskId);
+  if(!input.files || !input.files[0]) return;
+  var file = input.files[0];
+  if(nameEl) nameEl.textContent = '✅ 已選擇照片';
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    if(preview) {
+      preview.style.display = 'block';
+      preview.innerHTML = '<img src="'+e.target.result+'" style="width:100%;max-height:160px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">';
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+// ── 完成點貨/自取（含照片上傳）──
+async function completePointTask(taskId) {
+  if(!confirm('確定完成此任務？')) return;
+
+  var photoEl = document.getElementById('point-photo-' + taskId);
+  var photoUrl = '';
+
+  // ★ 上傳照片（如果有）
+  if(photoEl && photoEl.files && photoEl.files[0]) {
+    try {
+      var photoDataUrl = await new Promise(function(resolve, reject){
+        var reader = new FileReader();
+        reader.onload = function(e){ resolve(e.target.result); };
+        reader.onerror = function(){ reject(new Error('讀取照片失敗')); };
+        reader.readAsDataURL(photoEl.files[0]);
+      });
+      var compressedBlob = await compressImage(photoDataUrl, 1024, 0.7);
+      var fname = 'point/' + taskId + '_' + Date.now() + '.jpg';
+      var { data: upData, error: upErr } = await sb.storage
+        .from('package-photos')
+        .upload(fname, compressedBlob, { contentType: 'image/jpeg', upsert: true });
+      if(!upErr && upData) {
+        photoUrl = 'package-photos/' + upData.path;
+        console.log('📷 點貨照片已上傳:', photoUrl);
+      }
+    } catch(e) { console.error('上傳點貨照片失敗:', e); }
+  }
+
+  try {
+    var { data: task, error: fetchErr } = await sb.from('tasks').select('*').eq('id', taskId).single();
+    if(fetchErr || !task) { showToast('找不到此任務','red'); return; }
+
+    var updateData = {
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+      completed_by: currentStaffId,
+      completed_by_name: currentStaffName
+    };
+    if(photoUrl) updateData.ship_photo = photoUrl; // 存照片 URL
+
+    const { error } = await sb.from('tasks').update(updateData).eq('id', taskId);
+    if(error) { console.error(error); showToast('更新失敗','red'); return; }
+
+    // 更新 packages 狀態
+    var tType = task.task_type || task.type || '';
+    var newStatus = (tType === 'point') ? 'point_done' : (tType === 'pickup') ? 'picked' : '';
+    if(newStatus && task.member_code) {
+      // 嘗試從 details 解析包裹單號
+      var match = task.details ? task.details.match(/包裹[：:]\s*(.+?)(\n|$)/) : null;
+      if(match) {
+        var trackNos = match[1].split(/[,，、\s]+/);
+        for(var i = 0; i < trackNos.length; i++) {
+          var tn = trackNos[i].trim();
+          if(tn && tn.length > 5) await sb.from('packages').update({status: newStatus}).eq('tracking_no', tn);
+        }
+      }
+    }
+
+    showToast('✅ 任務已完成（' + currentStaffName + '）', 'green');
+    renderPointlistFromDB();
+    loadDailyStats();
+  } catch(e) { console.error(e); }
+}
+
+// ── 取消點貨/自取申請 ──
+async function cancelPointTask(taskId) {
+  if(!confirm('⚠️ 確定要取消此申請？\n\n取消後包裹狀態會回到「已到庫」。')) return;
+  try {
+    var { data: task } = await sb.from('tasks').select('*').eq('id', taskId).single();
+    if(task && task.details) {
+      var match = task.details.match(/包裹[：:]\s*(.+?)(\n|$)/);
+      if(match) {
+        var trackNos = match[1].split(/[,，、\s]+/);
+        for(var i = 0; i < trackNos.length; i++) {
+          var tn = trackNos[i].trim();
+          if(tn && tn.length > 5) await sb.from('packages').update({status:'arrived'}).eq('tracking_no', tn);
+        }
+      }
+    }
+    await sb.from('tasks').delete().eq('id', taskId);
+    showToast('✅ 已取消申請', 'green');
+    renderPointlistFromDB();
+    loadDailyStats();
+  } catch(e) { console.error(e); showToast('取消失敗','red'); }
 }
 
 // ── Supabase: 包裹查詢 ──────────────────────────
@@ -3404,7 +3599,7 @@ async function loadRecentPackagesDB() {
       .from('packages')
       .select('*')
       .gte('created_at', oneYearAgo.toISOString())
-      .order('created_at', { ascending: false })
+      .order('scanned_at', { ascending: false })
       .limit(200);
     if(error) { results.innerHTML = '<div style="color:var(--red);padding:20px">載入失敗：' + (error.message||'') + '</div>'; return; }
     if(!data || data.length === 0) {
