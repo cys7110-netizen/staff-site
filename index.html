@@ -2963,6 +2963,21 @@ async function renderShiplistFromDB() {
       var notes = t.notes || '';
       var allPkgs = memberAllPkgs[t.member_code] || [];
 
+      // ★ 解析出貨方式
+      var methodMatch = details.match(/出貨方式[：:]\s*(.+?)(\n|$)/);
+      var shipMethod = 'air_transfer';
+      if(methodMatch) {
+        if(/直飛/.test(methodMatch[1])) shipMethod = 'air_direct';
+        else if(/海運|海快/.test(methodMatch[1])) shipMethod = 'sea';
+      }
+      // ★ 箱子選項
+      var boxes = BOX_SIZES[shipMethod] || BOX_SIZES.air_transfer;
+      var boxOptionsHtml = '<option value="">請選擇箱子</option>';
+      boxes.forEach(function(b){
+        boxOptionsHtml += '<option value="'+b.name+'" data-min="'+b.minKg+'">'
+          + b.name + (b.minKg > 0 ? '（最低'+b.minKg+'kg）' : '（自訂重量）') + '</option>';
+      });
+
       // 解析出貨單號
       var shipMatch = details.match(/出貨單號[：:]\s*(.+?)(\n|$)/);
       var shipTrackNos = shipMatch ? shipMatch[1].split(/[,，、\s]+/).map(function(s){return s.trim()}).filter(Boolean) : [];
@@ -3015,11 +3030,29 @@ async function renderShiplistFromDB() {
       if(!isDone) {
         html += '<div style="background:rgba(40,180,100,0.04);border:1px solid rgba(40,180,100,0.15);border-radius:8px;padding:12px;margin-top:6px">'
           + '<div style="font-size:12px;font-weight:700;color:var(--green);margin-bottom:10px">📦 包裝完成填寫</div>'
-          // 實際重量
+          + '<input type="hidden" id="ship-method-'+t.id+'" value="'+shipMethod+'">'
+          // ★ 箱子尺寸
+          + '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'
+          + '<label style="font-size:12px;color:var(--text2);min-width:70px">箱子尺寸</label>'
+          + '<select id="ship-box-'+t.id+'" onchange="calcShipCost(\''+t.id+'\')" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none;background:white;font-family:inherit">'
+          + boxOptionsHtml
+          + '</select></div>'
+          // ★ 實際重量
           + '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'
           + '<label style="font-size:12px;color:var(--text2);min-width:70px">實際重量</label>'
-          + '<input id="ship-weight-'+t.id+'" type="number" step="0.1" placeholder="公斤" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none">'
+          + '<input id="ship-weight-'+t.id+'" type="number" step="0.1" placeholder="公斤" oninput="calcShipCost(\''+t.id+'\')" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none">'
           + '<span style="font-size:12px;color:var(--text3)">kg</span></div>'
+          // ★ 計費重量（自動計算顯示）
+          + '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'
+          + '<label style="font-size:12px;color:var(--text2);min-width:70px">計費重量</label>'
+          + '<span id="ship-billing-'+t.id+'" style="font-size:13px;font-weight:700;color:var(--text)">—</span></div>'
+          // ★ 新箱選擇
+          + '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'
+          + '<label style="font-size:12px;color:var(--text2);min-width:70px">新箱</label>'
+          + '<button id="newbox-yes-'+t.id+'" onclick="selectNewBox(\''+t.id+'\',true)" style="flex:1;padding:8px;border:2px solid var(--border);border-radius:6px;background:var(--bg2);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;color:var(--text2)">是</button>'
+          + '<button id="newbox-no-'+t.id+'" onclick="selectNewBox(\''+t.id+'\',false)" style="flex:1;padding:8px;border:2px solid var(--accent);border-radius:6px;background:rgba(27,79,138,0.1);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;color:var(--accent)">否</button>'
+          + '<input type="hidden" id="ship-newbox-'+t.id+'" value="no">'
+          + '</div>'
           // 報關行
           + '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'
           + '<label style="font-size:12px;color:var(--text2);min-width:70px">報關行</label>'
@@ -3027,11 +3060,11 @@ async function renderShiplistFromDB() {
           + '<button id="broker-hh-'+t.id+'" onclick="selectBroker(\''+t.id+'\',\'鴻海\')" style="flex:1;padding:10px;border:2px solid var(--border);border-radius:8px;background:var(--bg2);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;color:var(--text2)">鴻海</button>'
           + '<input type="hidden" id="ship-tracking-'+t.id+'" value="">'
           + '</div>'
-          // 運費（自動計算顯示）
+          // ★ 運費（自動計算，雙幣顯示）
           + '<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">'
           + '<label style="font-size:12px;color:var(--text2);min-width:70px">運費</label>'
-          + '<span id="ship-cost-'+t.id+'" style="font-size:14px;font-weight:700;color:var(--accent)">—</span>'
-          + '<button onclick="calcShipCost(\''+t.id+'\')" style="background:rgba(27,79,138,0.1);border:none;color:var(--accent);font-size:11px;padding:4px 10px;border-radius:4px;cursor:pointer">計算</button></div>'
+          + '<div id="ship-cost-'+t.id+'" style="flex:1">—</div>'
+          + '</div>'
           // 拍照
           + '<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">'
           + '<label style="font-size:12px;color:var(--text2);min-width:70px">包裝照片</label>'
@@ -3055,9 +3088,21 @@ async function renderShiplistFromDB() {
       if(isDone) {
         html += '<div style="background:rgba(40,180,100,0.05);border:1px solid rgba(40,180,100,0.15);border-radius:6px;padding:10px;margin-top:6px">'
           + '<div style="font-size:12px;font-weight:600;color:var(--green);margin-bottom:6px">✅ 已包裝完成</div>';
-        if(t.ship_weight) html += '<div style="font-size:12px;color:var(--text2)">實際重量：<strong>'+t.ship_weight+' kg</strong></div>';
+        // 從 notes 解析箱子、計費重量、TWD
+        var tn = t.notes || '';
+        var boxMatch = tn.match(/箱子:([^|]+)/);
+        var twdMatch = tn.match(/TWD:(\d+)/);
+        var methodMatch2 = tn.match(/方式:([^|]+)/);
+        var newBoxMatch = tn.match(/新箱:是/);
+        if(boxMatch) html += '<div style="font-size:12px;color:var(--text2)">箱子：<strong>'+boxMatch[1]+'</strong></div>';
+        if(methodMatch2) html += '<div style="font-size:12px;color:var(--text2)">出貨方式：<strong>'+methodMatch2[1]+'</strong></div>';
+        if(t.ship_weight) html += '<div style="font-size:12px;color:var(--text2)">計費重量：<strong>'+t.ship_weight+' kg</strong></div>';
+        if(newBoxMatch) html += '<div style="font-size:12px;color:var(--text2)">新箱：<strong>是</strong></div>';
         if(t.ship_logistic) html += '<div style="font-size:12px;color:var(--text2)">報關行：<strong>'+t.ship_logistic+'</strong></div>';
-        if(t.ship_cost) html += '<div style="font-size:12px;color:var(--accent);font-weight:600">運費：₩'+Number(t.ship_cost).toLocaleString()+'</div>';
+        if(t.ship_cost) {
+          var twdAmt = twdMatch ? 'NT$'+Number(twdMatch[1]).toLocaleString() : '';
+          html += '<div style="font-size:13px;color:var(--accent);font-weight:700;margin-top:4px">運費：₩'+Number(t.ship_cost).toLocaleString()+(twdAmt ? '（'+twdAmt+'）' : '')+'</div>';
+        }
         if(t.ship_photo) html += '<div style="margin-top:6px"><img src="'+t.ship_photo+'" style="width:100%;max-height:160px;object-fit:cover;border-radius:6px;border:1px solid var(--border)"></div>';
         html += '</div>';
       }
@@ -3117,30 +3162,159 @@ function previewShipPhoto(taskId, input) {
   }
 }
 
-// ── 運費計算（與前台試算一致）──
+// ── 箱子尺寸與最低計費重量 ──
+var BOX_SIZES = {
+  air_direct: [
+    { name: '八號箱', minKg: 3 },
+    { name: '七號箱', minKg: 5 },
+    { name: '六號箱', minKg: 7 },
+    { name: '五號箱', minKg: 11 },
+    { name: '四號箱', minKg: 17 },
+    { name: '三號箱', minKg: 24 },
+    { name: '二號箱', minKg: 34 },
+    { name: '一號箱', minKg: 42 },
+    { name: '其他', minKg: 0 }
+  ],
+  air_transfer: [
+    { name: '三號箱', minKg: 20 },
+    { name: '二號箱', minKg: 30 },
+    { name: '一號箱', minKg: 38 },
+    { name: '其他', minKg: 0 }
+  ],
+  sea: [
+    { name: '三號箱', minKg: 20 },
+    { name: '二號箱', minKg: 30 },
+    { name: '一號箱', minKg: 38 },
+    { name: '其他', minKg: 0 }
+  ]
+};
+
+// 新箱費用
+var NEW_BOX_FEE_KRW = 2000;
+var NEW_BOX_FEE_TWD = 40;
+
+// ── 運費計算（箱子尺寸 + 首重續重 + 新箱費用 + 雙幣顯示）──
 function calcShipCost(taskId) {
   var wEl = document.getElementById('ship-weight-'+taskId);
   var costEl = document.getElementById('ship-cost-'+taskId);
-  if(!wEl || !costEl) return;
-  var w = parseFloat(wEl.value);
-  if(!w || w <= 0) { costEl.textContent = '請輸入重量'; return; }
-  // 空運直飛 ₩8,000/kg（最低₩15,000），空運轉機 ₩6,500/kg，海運 ₩3,500/kg
-  var rates = { air_direct: 8000, air_transfer: 6500, sea: 3500 };
-  var mins = { air_direct: 15000, air_transfer: 13000, sea: 10000 };
-  // 嘗試從 details 解析出貨方式
-  var method = 'air_transfer'; // default
-  var card = wEl.closest('[style]');
-  if(card) {
-    var text = card.textContent || '';
-    if(/直飛/.test(text)) method = 'air_direct';
-    else if(/海運/.test(text)) method = 'sea';
+  var billingEl = document.getElementById('ship-billing-'+taskId);
+  var boxEl = document.getElementById('ship-box-'+taskId);
+  var methodEl = document.getElementById('ship-method-'+taskId);
+  var newboxEl = document.getElementById('ship-newbox-'+taskId);
+
+  if(!costEl) return;
+
+  var w = wEl ? parseFloat(wEl.value) : 0;
+  var method = methodEl ? methodEl.value : 'air_transfer';
+  var isNewBox = newboxEl ? newboxEl.value === 'yes' : false;
+
+  // 取得箱子最低重量
+  var boxMinKg = 0;
+  var boxName = '';
+  if(boxEl && boxEl.value) {
+    boxName = boxEl.value;
+    var opt = boxEl.options[boxEl.selectedIndex];
+    boxMinKg = opt ? parseInt(opt.dataset.min || '0') : 0;
   }
-  var rate = rates[method] || 6500;
-  var min = mins[method] || 13000;
-  var cost = Math.max(Math.ceil(w) * rate, min);
-  costEl.textContent = '₩' + cost.toLocaleString() + '（' + Math.ceil(w) + 'kg × ₩' + rate.toLocaleString() + '）';
-  costEl.dataset.cost = cost;
+
+  if(!boxName && !w) {
+    costEl.textContent = '請選擇箱子並輸入重量';
+    if(billingEl) billingEl.textContent = '—';
+    costEl.dataset.cost = ''; costEl.dataset.costTwd = '';
+    return;
+  }
+
+  // 計費重量 = max(進位實際重量, 箱子最低重量)
+  var actualW = w > 0 ? Math.ceil(w) : 0;
+  var billingW = boxMinKg > 0 ? Math.max(actualW, boxMinKg) : actualW;
+
+  if(billingW <= 0) {
+    costEl.textContent = boxName === '其他' ? '請輸入重量' : '請選擇箱子或輸入重量';
+    if(billingEl) billingEl.textContent = '—';
+    costEl.dataset.cost = ''; costEl.dataset.costTwd = '';
+    return;
+  }
+
+  // 顯示計費重量
+  if(billingEl) {
+    if(boxMinKg > 0 && actualW < boxMinKg) {
+      billingEl.innerHTML = '<strong>' + billingW + ' kg</strong>（箱子最低 ' + boxMinKg + ' kg，實際 ' + (actualW||0) + ' kg）';
+      billingEl.style.color = '#e67e22';
+    } else if(boxMinKg > 0 && actualW >= boxMinKg) {
+      billingEl.innerHTML = '<strong>' + billingW + ' kg</strong>（超過箱子最低 ' + boxMinKg + ' kg）';
+      billingEl.style.color = 'var(--green)';
+    } else {
+      billingEl.innerHTML = '<strong>' + billingW + ' kg</strong>';
+      billingEl.style.color = 'var(--text)';
+    }
+  }
+
+  // ★ 計算 KRW 運費
+  var costKRW = 0;
+  if(method === 'air_direct') {
+    var fK = 14800, cK = 10000;
+    costKRW = billingW <= 5 ? (fK + (billingW - 1) * cK) : (billingW * cK);
+  } else if(method === 'air_transfer') {
+    var fK = 14300, cK = 9500;
+    costKRW = billingW <= 4 ? (fK + (billingW - 1) * cK) : (billingW * cK);
+  } else if(method === 'sea') {
+    var seaW = Math.max(5, billingW);
+    costKRW = seaW * 6300;
+    billingW = seaW; // 海快最低5kg
+  }
+
+  // ★ 計算 TWD 運費
+  var costTWD = 0;
+  if(method === 'air_direct') {
+    costTWD = billingW <= 5 ? (335 + (billingW - 1) * 215) : (billingW * 215);
+  } else if(method === 'air_transfer') {
+    costTWD = billingW <= 4 ? (325 + (billingW - 1) * 205) : (billingW * 205);
+  } else if(method === 'sea') {
+    costTWD = Math.max(5, billingW) * 135;
+  }
+
+  // ★ 新箱費用
+  var newBoxKRW = isNewBox ? NEW_BOX_FEE_KRW : 0;
+  var newBoxTWD = isNewBox ? NEW_BOX_FEE_TWD : 0;
+
+  var totalKRW = costKRW + newBoxKRW;
+  var totalTWD = costTWD + newBoxTWD;
+
+  // ★ 顯示雙幣
+  var methodLabel = method === 'air_direct' ? '直飛' : (method === 'sea' ? '海快' : '轉機');
+  var display = '₩' + totalKRW.toLocaleString() + '（NT$' + totalTWD.toLocaleString() + '）';
+  var detail = methodLabel + ' ' + billingW + 'kg';
+  if(isNewBox) detail += ' +新箱';
+  costEl.innerHTML = '<div style="font-size:16px;font-weight:800;color:var(--accent)">₩' + totalKRW.toLocaleString() + '</div>'
+    + '<div style="font-size:13px;color:#e67e22;font-weight:600">NT$' + totalTWD.toLocaleString() + '</div>'
+    + '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + detail + '</div>';
+
+  // 儲存數據
+  costEl.dataset.cost = totalKRW;
+  costEl.dataset.costTwd = totalTWD;
   costEl.dataset.method = method;
+  costEl.dataset.billingWeight = billingW;
+  costEl.dataset.boxName = boxName;
+  costEl.dataset.newBox = isNewBox ? 'yes' : 'no';
+}
+
+// ── 新箱選擇 ──
+function selectNewBox(taskId, isYes) {
+  var yesBtn = document.getElementById('newbox-yes-'+taskId);
+  var noBtn = document.getElementById('newbox-no-'+taskId);
+  var hidden = document.getElementById('ship-newbox-'+taskId);
+  var activeStyle = 'border:2px solid var(--accent);background:rgba(27,79,138,0.1);color:var(--accent)';
+  var inactiveStyle = 'border:2px solid var(--border);background:var(--bg2);color:var(--text2)';
+  if(isYes) {
+    if(yesBtn) yesBtn.style.cssText = 'flex:1;padding:8px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;' + activeStyle;
+    if(noBtn) noBtn.style.cssText = 'flex:1;padding:8px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;' + inactiveStyle;
+    if(hidden) hidden.value = 'yes';
+  } else {
+    if(noBtn) noBtn.style.cssText = 'flex:1;padding:8px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;' + activeStyle;
+    if(yesBtn) yesBtn.style.cssText = 'flex:1;padding:8px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;' + inactiveStyle;
+    if(hidden) hidden.value = 'no';
+  }
+  calcShipCost(taskId);
 }
 
 // ── 報關行選擇 ──
@@ -3155,7 +3329,7 @@ function selectBroker(taskId, broker) {
   if(hiddenInput) hiddenInput.value = broker;
 }
 
-// ── 包裝完成確認（含重量、報關行、照片、運費）──
+// ── 包裝完成確認（含箱子、計費重量、雙幣運費、照片）──
 async function confirmShipPacking(taskId) {
   try {
     const { data: task, error } = await sb.from('tasks').select('*').eq('id', taskId).single();
@@ -3165,24 +3339,30 @@ async function confirmShipPacking(taskId) {
     var trackingEl = document.getElementById('ship-tracking-'+taskId);
     var costEl = document.getElementById('ship-cost-'+taskId);
     var photoEl = document.getElementById('ship-photo-'+taskId);
+    var boxEl = document.getElementById('ship-box-'+taskId);
 
     var shipWeight = weightEl ? parseFloat(weightEl.value) : 0;
     var shipTracking = trackingEl ? trackingEl.value.trim() : '';
-    var shipCost = costEl && costEl.dataset.cost ? parseInt(costEl.dataset.cost) : 0;
+    var shipCostKRW = costEl && costEl.dataset.cost ? parseInt(costEl.dataset.cost) : 0;
+    var shipCostTWD = costEl && costEl.dataset.costTwd ? parseInt(costEl.dataset.costTwd) : 0;
+    var billingWeight = costEl && costEl.dataset.billingWeight ? parseInt(costEl.dataset.billingWeight) : 0;
+    var boxName = costEl && costEl.dataset.boxName ? costEl.dataset.boxName : '';
+    var shipMethod = costEl && costEl.dataset.method ? costEl.dataset.method : '';
+    var isNewBox = costEl && costEl.dataset.newBox === 'yes';
 
+    if(!boxName && !shipWeight) { showToast('請選擇箱子尺寸','red'); return; }
     if(!shipWeight) { showToast('請填寫實際重量','red'); return; }
     if(!shipTracking) { showToast('請選擇報關行','red'); return; }
-    if(!shipCost) { calcShipCost(taskId); showToast('請先計算運費','red'); return; }
+    if(!shipCostKRW) { calcShipCost(taskId); showToast('請確認運費金額','red'); return; }
     // ★ 強制要求包裝照片
     if(!photoEl || !photoEl.files || !photoEl.files[0]) {
       showToast('📷 請先拍照上傳包裝完成照片','red'); return;
     }
 
-    // ★ 壓縮 + 上傳包裝照片（與入庫照片同規格）
+    // ★ 壓縮 + 上傳包裝照片
     var shipPhotoUrl = '';
     try {
       var photoFile = photoEl.files[0];
-      // 先轉成 dataURL 再壓縮
       var photoDataUrl = await new Promise(function(resolve, reject){
         var reader = new FileReader();
         reader.onload = function(e){ resolve(e.target.result); };
@@ -3215,10 +3395,19 @@ async function confirmShipPacking(taskId) {
       return;
     }
 
-    var confirmMsg = '確認包裝完成？\n\n重量：'+shipWeight+'kg\n報關行：'+shipTracking+'\n運費：₩'+shipCost.toLocaleString()+'\n照片：✅ 已上傳';
+    var methodLabel = shipMethod === 'air_direct' ? '直飛' : (shipMethod === 'sea' ? '海快' : '轉機');
+    var confirmMsg = '確認包裝完成？\n\n'
+      + '📦 箱子：' + (boxName || '—') + '\n'
+      + '⚖️ 實際重量：' + shipWeight + ' kg\n'
+      + '⚖️ 計費重量：' + billingWeight + ' kg\n'
+      + '🚚 出貨方式：' + methodLabel + '\n'
+      + '🏢 報關行：' + shipTracking + '\n'
+      + (isNewBox ? '📦 新箱：是\n' : '')
+      + '💰 運費：₩' + shipCostKRW.toLocaleString() + '（NT$' + shipCostTWD.toLocaleString() + '）\n'
+      + '📷 照片：✅ 已上傳';
     if(!confirm(confirmMsg)) return;
 
-    // 立即更新 UI（不等待 DB）
+    // 立即更新 UI
     var packForm = document.getElementById('ship-weight-'+taskId);
     var targetCard = null;
     if(packForm) {
@@ -3226,11 +3415,14 @@ async function confirmShipPacking(taskId) {
       if(targetCard) {
         targetCard.style.opacity = '0.5';
         targetCard.style.background = 'rgba(0,0,0,0.03)';
-        // 隱藏包裝表單，顯示完成標記
         var formDiv = packForm.closest('div[style*="rgba(40,180,100"]');
         if(formDiv) formDiv.innerHTML = '<div style="text-align:center;padding:16px;color:var(--green);font-weight:700;font-size:14px">⏳ 正在儲存包裝資料...</div>';
       }
     }
+
+    // ★ 組合備註資訊（含箱子、計費重量、TWD、新箱）
+    var shipNotes = '箱子:' + boxName + '|計費:' + billingWeight + 'kg|方式:' + methodLabel + '|TWD:' + shipCostTWD;
+    if(isNewBox) shipNotes += '|新箱:是';
 
     // 更新 task 狀態 + 儲存包裝資訊
     var { error: updateErr } = await sb.from('tasks').update({
@@ -3238,10 +3430,11 @@ async function confirmShipPacking(taskId) {
       completed_at: new Date().toISOString(),
       completed_by: currentStaffId,
       completed_by_name: currentStaffName,
-      ship_weight: shipWeight,
+      ship_weight: billingWeight,
       ship_logistic: shipTracking,
-      ship_cost: shipCost,
-      ship_photo: shipPhotoUrl
+      ship_cost: shipCostKRW,
+      ship_photo: shipPhotoUrl,
+      notes: (task.notes ? task.notes + '\n' : '') + shipNotes
     }).eq('id', taskId);
 
     if(updateErr) { showToast('❌ 更新失敗：'+updateErr.message,'red'); return; }
@@ -3269,10 +3462,14 @@ async function confirmShipPacking(taskId) {
       var forms = targetCard.querySelectorAll('div[style*="rgba(40,180,100"]');
       if(forms.length === 0) forms = targetCard.querySelectorAll('div[style*="text-align:center"]');
       forms.forEach(function(f){ 
+        var methodLbl = shipMethod === 'air_direct' ? '直飛' : (shipMethod === 'sea' ? '海快' : '轉機');
         f.innerHTML = '<div style="font-size:13px;font-weight:700;color:var(--green);padding:8px">✅ 已包裝完成</div>'
-          + '<div style="font-size:12px;color:var(--text2)">重量：<strong>'+shipWeight+' kg</strong></div>'
+          + '<div style="font-size:12px;color:var(--text2)">箱子：<strong>'+(boxName||'—')+'</strong></div>'
+          + '<div style="font-size:12px;color:var(--text2)">出貨方式：<strong>'+methodLbl+'</strong></div>'
+          + '<div style="font-size:12px;color:var(--text2)">計費重量：<strong>'+billingWeight+' kg</strong></div>'
+          + (isNewBox ? '<div style="font-size:12px;color:var(--text2)">新箱：<strong>是</strong></div>' : '')
           + '<div style="font-size:12px;color:var(--text2)">報關行：<strong>'+shipTracking+'</strong></div>'
-          + '<div style="font-size:12px;color:var(--accent);font-weight:600">運費：₩'+shipCost.toLocaleString()+'</div>';
+          + '<div style="font-size:13px;color:var(--accent);font-weight:700;margin-top:4px">運費：₩'+shipCostKRW.toLocaleString()+'（NT$'+shipCostTWD.toLocaleString()+'）</div>';
       });
     }
 
