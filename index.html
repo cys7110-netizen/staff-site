@@ -3023,16 +3023,18 @@ async function renderShiplistFromDB() {
           var shelfTag = p.shelf ? ' <span style="background:rgba(27,79,138,0.1);color:var(--accent);font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px">📍'+p.shelf+'</span>' : '';
           html += '<div style="font-family:monospace;font-size:12px;padding:3px 0;color:var(--text)">📦 '+tnHtml+shelfTag+'</div>';
         });
-        // 客人在庫包裹摘要（含貨架位置）
+        // 客人全部在庫包裹的貨架摘要（含出貨的）
+        var _cs = ['delivered','picked','transit','shipping'];
+        var allInStock = allPkgs.filter(function(p){ return !_cs.includes(p.status); });
         var shelfPositions = {};
-        remainPkgs.forEach(function(p){ if(p.shelf) shelfPositions[p.shelf] = (shelfPositions[p.shelf]||0)+1; });
+        allInStock.forEach(function(p){ if(p.shelf) shelfPositions[p.shelf] = (shelfPositions[p.shelf]||0)+1; });
         var shelfSummary = Object.keys(shelfPositions).map(function(s){ return '📍'+s+'('+shelfPositions[s]+')'; }).join(' ');
         if(!shelfSummary && allPkgs.length > 0) {
           var anyShelf = allPkgs.find(function(p){ return p.shelf; });
           if(anyShelf) shelfSummary = '📍'+anyShelf.shelf;
         }
-        if(remainPkgs.length > 0) {
-          html += '<div style="font-size:12px;color:var(--text2);margin-top:6px;padding-top:6px;border-top:1px dashed rgba(27,79,138,0.15)">📦 客人在庫包裹（<strong>'+remainPkgs.length+'</strong> 件）'+(shelfSummary ? ' '+shelfSummary : '')+'</div>';
+        if(allInStock.length > shipPkgs.length) {
+          html += '<div style="font-size:12px;color:var(--text2);margin-top:6px;padding-top:6px;border-top:1px dashed rgba(27,79,138,0.15)">📦 客人在庫包裹（<strong>'+allInStock.length+'</strong> 件）'+(shelfSummary ? ' '+shelfSummary : '')+'</div>';
         }
         html += '</div>';
       }
