@@ -608,31 +608,6 @@ input[type=file] { display:none; }
     <span id="batch-count" style="font-size:12px;color:var(--accent);font-weight:700;display:none">本批 0 件</span>
   </div>
 
-  <!-- 連續掃碼模式開關 -->
-  <div style="padding:6px 20px 0;display:flex;justify-content:space-between;align-items:center">
-    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text2);font-weight:600" onclick="toggleContinuousMode()">
-      <span id="continuous-toggle" style="width:42px;height:24px;background:var(--border);border-radius:12px;position:relative;display:inline-block;transition:background 0.2s;flex-shrink:0">
-        <span style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:white;border-radius:50%;transition:transform 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2)"></span>
-      </span>
-      🔁 連續掃碼（鎖定代號）
-    </label>
-    <span id="continuous-count" style="font-size:12px;color:#16a34a;font-weight:700;display:none">連續 0 件</span>
-  </div>
-
-  <!-- 鎖定代號顯示列 -->
-  <div id="continuous-member-bar" style="display:none;margin:6px 20px 0;padding:10px 14px;background:linear-gradient(135deg,rgba(22,163,74,0.08),rgba(22,163,74,0.03));border:1.5px solid rgba(22,163,74,0.25);border-radius:10px;display:none">
-    <div style="display:flex;align-items:center;justify-content:space-between">
-      <div style="display:flex;align-items:center;gap:8px">
-        <span style="font-size:18px">🔒</span>
-        <div>
-          <div style="font-size:12px;color:var(--text3)">鎖定代號</div>
-          <div id="continuous-member-display" style="font-size:15px;font-weight:700;color:#16a34a;font-family:monospace">—</div>
-        </div>
-      </div>
-      <button onclick="clearContinuousMember()" style="background:rgba(220,60,60,0.1);border:1.5px solid rgba(220,60,60,0.2);color:var(--red);font-size:12px;font-weight:600;padding:6px 12px;border-radius:6px;cursor:pointer">✕ 解除鎖定</button>
-    </div>
-  </div>
-
   <!-- 批量入庫成功提示（浮動） -->
   <div id="batch-success-banner" style="display:none;position:absolute;top:80px;left:16px;right:16px;z-index:100;background:linear-gradient(135deg,#16a34a,#22c55e);color:white;padding:14px 20px;border-radius:12px;box-shadow:0 4px 20px rgba(22,163,74,0.4);text-align:center;font-weight:700;font-size:15px;animation:batchFadeIn 0.3s ease">
     <div id="batch-success-text">✅ 入庫成功！</div>
@@ -1033,6 +1008,30 @@ input[type=file] { display:none; }
 </div>
 
 <!-- ══ TASKS SCREEN ══ -->
+<div id="screen-tasks" class="screen">
+  <div class="topbar">
+    <button onclick="showScreen('screen-home')" style="background:rgba(255,255,255,0.15);border:none;color:white;padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer">← 返回</button>
+    <div style="text-align:center">
+      <div class="topbar-title">📋 待辦系統</div>
+      <div class="topbar-sub">客人申請 · 即時處理</div>
+    </div>
+    <button onclick="loadTasks()" style="background:rgba(255,255,255,0.15);border:none;color:white;padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer">🔄</button>
+  </div>
+
+  <div style="flex:1;overflow-y:auto;padding:16px">
+    <!-- Tab -->
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <button id="task-tab-pending" onclick="switchTaskTab('pending')" style="flex:1;padding:10px;border-radius:8px;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--accent);background:var(--accent);color:white">待處理 <span id="task-pending-count">0</span></button>
+      <button id="task-tab-completed" onclick="switchTaskTab('completed')" style="flex:1;padding:10px;border-radius:8px;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:white;color:var(--text2)">已完成 <span id="task-completed-count">0</span></button>
+    </div>
+    <div id="task-list" style="display:flex;flex-direction:column;gap:10px">
+      <div style="text-align:center;color:var(--text3);padding:40px;font-size:13px">載入中...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
 
 <script>
 // ── Supabase ─────────────────────────────────────
@@ -1689,60 +1688,6 @@ let btConnected = false;
 let batchMode = false;
 let batchCount = 0;
 
-// ── 連續掃碼模式 ─────────────────────────────────
-let continuousMode = false;
-let continuousMemberCode = null;
-let continuousMemberName = null;
-let continuousCount = 0;
-
-function toggleContinuousMode() {
-  continuousMode = !continuousMode;
-  var toggle = document.getElementById('continuous-toggle');
-  var countEl = document.getElementById('continuous-count');
-  var memberBar = document.getElementById('continuous-member-bar');
-  if(continuousMode) {
-    toggle.classList.add('batch-on');
-    countEl.style.display = '';
-    continuousCount = 0;
-    countEl.textContent = '連續 0 件';
-    // 如果目前已有會員代號，自動鎖定
-    var mci = document.getElementById('member-code-input');
-    var currentCode = mci ? mci.value.trim().toUpperCase() : '';
-    if(currentCode && members[currentCode]) {
-      continuousMemberCode = currentCode;
-      continuousMemberName = members[currentCode].name;
-      updateContinuousBar();
-    }
-    showToast('🔁 連續掃碼已開啟 — 請先確認代號', 'green');
-  } else {
-    toggle.classList.remove('batch-on');
-    countEl.style.display = 'none';
-    continuousMemberCode = null;
-    continuousMemberName = null;
-    if(memberBar) memberBar.style.display = 'none';
-    showToast('連續掃碼已關閉');
-  }
-}
-
-function updateContinuousBar() {
-  var bar = document.getElementById('continuous-member-bar');
-  var display = document.getElementById('continuous-member-display');
-  if(!bar) return;
-  if(continuousMode && continuousMemberCode) {
-    bar.style.display = 'block';
-    display.textContent = continuousMemberCode + (continuousMemberName ? '（' + continuousMemberName + '）' : '');
-  } else {
-    bar.style.display = 'none';
-  }
-}
-
-function clearContinuousMember() {
-  continuousMemberCode = null;
-  continuousMemberName = null;
-  updateContinuousBar();
-  showToast('已解除鎖定代號');
-}
-
 function toggleBatchMode() {
   batchMode = !batchMode;
   var toggle = document.getElementById('batch-toggle');
@@ -1877,12 +1822,7 @@ function scanNext() {
   var unc = document.getElementById('is-unclaimed');
   if(unc) { unc.checked = false; }
   var mci = document.getElementById('member-code-input');
-  // ★ 連續掃碼模式：保留鎖定的代號
-  if(continuousMode && continuousMemberCode) {
-    if(mci) mci.value = continuousMemberCode;
-  } else {
-    if(mci) mci.value = '';
-  }
+  if(mci) mci.value = '';
   showScreen('screen-scan');
   setTimeout(function(){ startCamera(); }, 300);
 }
@@ -2060,12 +2000,6 @@ async function _doMemberLookup(code, showAlert) {
       if(currentPkg) currentPkg.memberCode = matchedCode;
       if(input) input.value = matchedCode;
       showToast('✅ 找到會員：'+member.name, 'green');
-      // ★ 連續掃碼：鎖定代號
-      if(continuousMode) {
-        continuousMemberCode = matchedCode;
-        continuousMemberName = member.name;
-        updateContinuousBar();
-      }
       autoFillShelfFromExisting(matchedCode);
       return;
     }
@@ -2093,12 +2027,6 @@ async function _doMemberLookup(code, showAlert) {
         if(currentPkg) currentPkg.memberCode = matchedCode;
         if(input) input.value = matchedCode;
         showToast('✅ 找到會員：'+(sbMember.name || matchedCode), 'green');
-        // ★ 連續掃碼：鎖定代號
-        if(continuousMode) {
-          continuousMemberCode = matchedCode;
-          continuousMemberName = sbMember.name || matchedCode;
-          updateContinuousBar();
-        }
         autoFillShelfFromExisting(matchedCode);
         return;
       }
@@ -2216,23 +2144,10 @@ function lookupBarcode(code) {
     packageDB[code] = pkg;
   }
 
-  // ★ 連續掃碼模式：自動帶入鎖定的代號
-  if(continuousMode && continuousMemberCode) {
-    pkg.memberCode = continuousMemberCode;
-  }
-
   currentPkg = pkg;
-  // ★ 連續掃碼：保留自動擷取的照片；一般模式：清空重來
-  if(!continuousMode) {
-    uploadedPhotos = [];
-  }
+  uploadedPhotos = [];
   renderDetailScreen(pkg);
   showScreen('screen-detail');
-
-  // ★ 連續掃碼：帶入後自動查詢貨架
-  if(continuousMode && continuousMemberCode) {
-    autoFillShelfFromExisting(continuousMemberCode);
-  }
 }
 
 function renderDetailScreen(pkg) {
@@ -2527,19 +2442,6 @@ async function confirmInbound() {
   // Show success
   const member = currentPkg.memberCode ? members[currentPkg.memberCode] : null;
 
-  // ★ 連續掃碼模式：鎖定代號（首次入庫時自動記住）
-  if(continuousMode && currentPkg.memberCode && !continuousMemberCode) {
-    continuousMemberCode = currentPkg.memberCode;
-    continuousMemberName = member ? member.name : null;
-    updateContinuousBar();
-  }
-  // ★ 連續掃碼計數
-  if(continuousMode) {
-    continuousCount++;
-    var cntEl = document.getElementById('continuous-count');
-    if(cntEl) cntEl.textContent = '連續 ' + continuousCount + ' 件';
-  }
-
   // ── 批量模式：快速顯示成功，自動下一件 ──
   if(batchMode) {
     batchCount++;
@@ -2547,13 +2449,6 @@ async function confirmInbound() {
     if(countEl) countEl.textContent = '本批 ' + batchCount + ' 件';
     showBatchSuccess(currentPkg.trackNo, parseFloat(weight).toFixed(1));
     // 自動跳到下一件
-    setTimeout(function(){ scanNext(); }, 800);
-    return;
-  }
-
-  // ── 連續掃碼模式（非批量）：顯示成功後自動下一件 ──
-  if(continuousMode) {
-    showBatchSuccess(currentPkg.trackNo, parseFloat(weight).toFixed(1));
     setTimeout(function(){ scanNext(); }, 800);
     return;
   }
@@ -3125,44 +3020,21 @@ async function renderShiplistFromDB() {
           var tnHtml = tn.length > 4
             ? tn.slice(0,-4) + '<span style="color:#dc3c3c;font-weight:800">' + tn.slice(-4) + '</span>'
             : '<span style="color:#dc3c3c;font-weight:800">' + tn + '</span>';
-          var shelfTag = p.shelf ? ' <span style="background:rgba(220,60,60,0.1);color:#dc3c3c;font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px">📍'+p.shelf+'</span>' : '';
+          var shelfTag = p.shelf ? ' <span style="background:rgba(27,79,138,0.1);color:var(--accent);font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px">📍'+p.shelf+'</span>' : '';
           html += '<div style="font-family:monospace;font-size:12px;padding:3px 0;color:var(--text)">📦 '+tnHtml+shelfTag+'</div>';
         });
-        // ★ 客人全部在庫包裹的貨架摘要（含出貨包裹，出貨位置標紅）
+        // 客人全部在庫包裹的貨架摘要（含出貨的）
         var _cs = ['delivered','picked','transit','shipping'];
         var allInStock = allPkgs.filter(function(p){ return !_cs.includes(p.status); });
-        // 合併：在庫 + 本次出貨包裹（去重，因出貨包裹可能 status='shipping' 被排除）
-        var allWarehouse = allInStock.slice();
-        shipPkgs.forEach(function(sp){
-          if(!allWarehouse.find(function(p){ return p.tracking_no === sp.tracking_no; })) {
-            allWarehouse.push(sp);
-          }
-        });
-        // 貨架統計 + 標記出貨位置
-        var shelfMap = {};
-        allWarehouse.forEach(function(p){
-          if(p.shelf) {
-            if(!shelfMap[p.shelf]) shelfMap[p.shelf] = { total:0, shipping:0 };
-            shelfMap[p.shelf].total++;
-          }
-        });
-        shipPkgs.forEach(function(p){
-          if(p.shelf && shelfMap[p.shelf]) shelfMap[p.shelf].shipping++;
-        });
-        // 生成摘要：出貨位置紅色，其他正常
-        var shelfSummary = Object.keys(shelfMap).sort().map(function(s){
-          var info = shelfMap[s];
-          if(info.shipping > 0) {
-            return '<span style="background:rgba(220,60,60,0.1);color:#dc3c3c;font-weight:700;padding:1px 6px;border-radius:3px">📍'+s+'('+info.total+')</span>';
-          }
-          return '📍'+s+'('+info.total+')';
-        }).join(' ');
+        var shelfPositions = {};
+        allInStock.forEach(function(p){ if(p.shelf) shelfPositions[p.shelf] = (shelfPositions[p.shelf]||0)+1; });
+        var shelfSummary = Object.keys(shelfPositions).map(function(s){ return '📍'+s+'('+shelfPositions[s]+')'; }).join(' ');
         if(!shelfSummary && allPkgs.length > 0) {
           var anyShelf = allPkgs.find(function(p){ return p.shelf; });
           if(anyShelf) shelfSummary = '📍'+anyShelf.shelf;
         }
-        if(allWarehouse.length > 0) {
-          html += '<div style="font-size:12px;color:var(--text2);margin-top:6px;padding-top:6px;border-top:1px dashed rgba(27,79,138,0.15)">📦 客人在庫包裹（<strong>'+allWarehouse.length+'</strong> 件）'+(shelfSummary ? ' '+shelfSummary : '')+'</div>';
+        if(allInStock.length > shipPkgs.length) {
+          html += '<div style="font-size:12px;color:var(--text2);margin-top:6px;padding-top:6px;border-top:1px dashed rgba(27,79,138,0.15)">📦 客人在庫包裹（<strong>'+allInStock.length+'</strong> 件）'+(shelfSummary ? ' '+shelfSummary : '')+'</div>';
         }
         html += '</div>';
       }
