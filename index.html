@@ -608,31 +608,6 @@ input[type=file] { display:none; }
     <span id="batch-count" style="font-size:12px;color:var(--accent);font-weight:700;display:none">本批 0 件</span>
   </div>
 
-  <!-- 連續掃碼模式開關 -->
-  <div style="padding:6px 20px 0;display:flex;justify-content:space-between;align-items:center">
-    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text2);font-weight:600" onclick="toggleContinuousMode()">
-      <span id="continuous-toggle" style="width:42px;height:24px;background:var(--border);border-radius:12px;position:relative;display:inline-block;transition:background 0.2s;flex-shrink:0">
-        <span style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:white;border-radius:50%;transition:transform 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2)"></span>
-      </span>
-      🔁 連續掃碼（鎖定代號）
-    </label>
-    <span id="continuous-count" style="font-size:12px;color:#16a34a;font-weight:700;display:none">連續 0 件</span>
-  </div>
-
-  <!-- 鎖定代號顯示列 -->
-  <div id="continuous-member-bar" style="display:none;margin:6px 20px 0;padding:10px 14px;background:linear-gradient(135deg,rgba(22,163,74,0.08),rgba(22,163,74,0.03));border:1.5px solid rgba(22,163,74,0.25);border-radius:10px;display:none">
-    <div style="display:flex;align-items:center;justify-content:space-between">
-      <div style="display:flex;align-items:center;gap:8px">
-        <span style="font-size:18px">🔒</span>
-        <div>
-          <div style="font-size:12px;color:var(--text3)">鎖定代號</div>
-          <div id="continuous-member-display" style="font-size:15px;font-weight:700;color:#16a34a;font-family:monospace">—</div>
-        </div>
-      </div>
-      <button onclick="clearContinuousMember()" style="background:rgba(220,60,60,0.1);border:1.5px solid rgba(220,60,60,0.2);color:var(--red);font-size:12px;font-weight:600;padding:6px 12px;border-radius:6px;cursor:pointer">✕ 解除鎖定</button>
-    </div>
-  </div>
-
   <!-- 批量入庫成功提示（浮動） -->
   <div id="batch-success-banner" style="display:none;position:absolute;top:80px;left:16px;right:16px;z-index:100;background:linear-gradient(135deg,#16a34a,#22c55e);color:white;padding:14px 20px;border-radius:12px;box-shadow:0 4px 20px rgba(22,163,74,0.4);text-align:center;font-weight:700;font-size:15px;animation:batchFadeIn 0.3s ease">
     <div id="batch-success-text">✅ 入庫成功！</div>
@@ -784,7 +759,7 @@ input[type=file] { display:none; }
       <div class="section-label" style="margin-bottom:12px">🗂️ 貨架位置</div>
       <div style="display:flex;gap:10px;margin-bottom:12px;align-items:flex-end">
         <div style="flex:2">
-          <div style="font-size:12px;color:var(--text3);margin-bottom:6px">貨架（A–Z）</div>
+          <div style="font-size:12px;color:var(--text3);margin-bottom:6px">貨架</div>
           <select id="shelf-letter" onchange="updateShelfDisplay()"
             style="width:100%;background:var(--bg);border:1.5px solid var(--border);color:var(--text);font-size:22px;font-weight:700;padding:14px 10px;border-radius:8px;outline:none;cursor:pointer;text-align:center;-webkit-appearance:none;appearance:none">
             <option value="">—</option>
@@ -795,16 +770,24 @@ input[type=file] { display:none; }
             <option>Q</option><option>R</option><option>S</option><option>T</option>
             <option>U</option><option>V</option><option>W</option><option>X</option>
             <option>Y</option><option>Z</option>
+            <option value="前區">前區</option>
+            <option value="右前">右前</option>
+            <option value="側門">側門</option>
+            <option value="冷氣前">冷氣前</option>
           </select>
         </div>
         <div style="flex:1">
-          <div style="font-size:12px;color:var(--text3);margin-bottom:6px">層架（上中下）</div>
+          <div style="font-size:12px;color:var(--text3);margin-bottom:6px">層架</div>
           <select id="shelf-pos-select" onchange="selectShelfPosSelect(this.value)"
             style="width:100%;background:var(--bg);border:1.5px solid var(--border);color:var(--text);font-size:22px;font-weight:700;padding:14px 10px;border-radius:8px;outline:none;cursor:pointer;text-align:center;-webkit-appearance:none;appearance:none;display:block">
             <option value="">—</option>
             <option value="上">上</option>
-            <option value="中">中</option>
+            <option value="中上">中上</option>
+            <option value="中下">中下</option>
             <option value="下">下</option>
+            <option value="旁">旁</option>
+            <option value="牆">牆</option>
+            <option value="前">前</option>
           </select>
         </div>
         <div style="flex:1;display:flex;flex-direction:column">
@@ -1713,60 +1696,6 @@ let btConnected = false;
 let batchMode = false;
 let batchCount = 0;
 
-// ── 連續掃碼模式 ─────────────────────────────────
-let continuousMode = false;
-let continuousMemberCode = null;
-let continuousMemberName = null;
-let continuousCount = 0;
-
-function toggleContinuousMode() {
-  continuousMode = !continuousMode;
-  var toggle = document.getElementById('continuous-toggle');
-  var countEl = document.getElementById('continuous-count');
-  var memberBar = document.getElementById('continuous-member-bar');
-  if(continuousMode) {
-    toggle.classList.add('batch-on');
-    countEl.style.display = '';
-    continuousCount = 0;
-    countEl.textContent = '連續 0 件';
-    // 如果目前已有會員代號，自動鎖定
-    var mci = document.getElementById('member-code-input');
-    var currentCode = mci ? mci.value.trim().toUpperCase() : '';
-    if(currentCode && members[currentCode]) {
-      continuousMemberCode = currentCode;
-      continuousMemberName = members[currentCode].name;
-      updateContinuousBar();
-    }
-    showToast('🔁 連續掃碼已開啟 — 請先確認代號', 'green');
-  } else {
-    toggle.classList.remove('batch-on');
-    countEl.style.display = 'none';
-    continuousMemberCode = null;
-    continuousMemberName = null;
-    if(memberBar) memberBar.style.display = 'none';
-    showToast('連續掃碼已關閉');
-  }
-}
-
-function updateContinuousBar() {
-  var bar = document.getElementById('continuous-member-bar');
-  var display = document.getElementById('continuous-member-display');
-  if(!bar) return;
-  if(continuousMode && continuousMemberCode) {
-    bar.style.display = 'block';
-    display.textContent = continuousMemberCode + (continuousMemberName ? '（' + continuousMemberName + '）' : '');
-  } else {
-    bar.style.display = 'none';
-  }
-}
-
-function clearContinuousMember() {
-  continuousMemberCode = null;
-  continuousMemberName = null;
-  updateContinuousBar();
-  showToast('已解除鎖定代號');
-}
-
 function toggleBatchMode() {
   batchMode = !batchMode;
   var toggle = document.getElementById('batch-toggle');
@@ -1901,12 +1830,7 @@ function scanNext() {
   var unc = document.getElementById('is-unclaimed');
   if(unc) { unc.checked = false; }
   var mci = document.getElementById('member-code-input');
-  // ★ 連續掃碼模式：保留鎖定的代號
-  if(continuousMode && continuousMemberCode) {
-    if(mci) mci.value = continuousMemberCode;
-  } else {
-    if(mci) mci.value = '';
-  }
+  if(mci) mci.value = '';
   showScreen('screen-scan');
   setTimeout(function(){ startCamera(); }, 300);
 }
@@ -2084,12 +2008,6 @@ async function _doMemberLookup(code, showAlert) {
       if(currentPkg) currentPkg.memberCode = matchedCode;
       if(input) input.value = matchedCode;
       showToast('✅ 找到會員：'+member.name, 'green');
-      // ★ 連續掃碼：鎖定代號
-      if(continuousMode) {
-        continuousMemberCode = matchedCode;
-        continuousMemberName = member.name;
-        updateContinuousBar();
-      }
       autoFillShelfFromExisting(matchedCode);
       return;
     }
@@ -2117,12 +2035,6 @@ async function _doMemberLookup(code, showAlert) {
         if(currentPkg) currentPkg.memberCode = matchedCode;
         if(input) input.value = matchedCode;
         showToast('✅ 找到會員：'+(sbMember.name || matchedCode), 'green');
-        // ★ 連續掃碼：鎖定代號
-        if(continuousMode) {
-          continuousMemberCode = matchedCode;
-          continuousMemberName = sbMember.name || matchedCode;
-          updateContinuousBar();
-        }
         autoFillShelfFromExisting(matchedCode);
         return;
       }
@@ -2240,23 +2152,10 @@ function lookupBarcode(code) {
     packageDB[code] = pkg;
   }
 
-  // ★ 連續掃碼模式：自動帶入鎖定的代號
-  if(continuousMode && continuousMemberCode) {
-    pkg.memberCode = continuousMemberCode;
-  }
-
   currentPkg = pkg;
-  // ★ 連續掃碼：保留自動擷取的照片；一般模式：清空重來
-  if(!continuousMode) {
-    uploadedPhotos = [];
-  }
+  uploadedPhotos = [];
   renderDetailScreen(pkg);
   showScreen('screen-detail');
-
-  // ★ 連續掃碼：帶入後自動查詢貨架
-  if(continuousMode && continuousMemberCode) {
-    autoFillShelfFromExisting(continuousMemberCode);
-  }
 }
 
 function renderDetailScreen(pkg) {
@@ -2551,19 +2450,6 @@ async function confirmInbound() {
   // Show success
   const member = currentPkg.memberCode ? members[currentPkg.memberCode] : null;
 
-  // ★ 連續掃碼模式：鎖定代號（首次入庫時自動記住）
-  if(continuousMode && currentPkg.memberCode && !continuousMemberCode) {
-    continuousMemberCode = currentPkg.memberCode;
-    continuousMemberName = member ? member.name : null;
-    updateContinuousBar();
-  }
-  // ★ 連續掃碼計數
-  if(continuousMode) {
-    continuousCount++;
-    var cntEl = document.getElementById('continuous-count');
-    if(cntEl) cntEl.textContent = '連續 ' + continuousCount + ' 件';
-  }
-
   // ── 批量模式：快速顯示成功，自動下一件 ──
   if(batchMode) {
     batchCount++;
@@ -2571,13 +2457,6 @@ async function confirmInbound() {
     if(countEl) countEl.textContent = '本批 ' + batchCount + ' 件';
     showBatchSuccess(currentPkg.trackNo, parseFloat(weight).toFixed(1));
     // 自動跳到下一件
-    setTimeout(function(){ scanNext(); }, 800);
-    return;
-  }
-
-  // ── 連續掃碼模式（非批量）：顯示成功後自動下一件 ──
-  if(continuousMode) {
-    showBatchSuccess(currentPkg.trackNo, parseFloat(weight).toFixed(1));
     setTimeout(function(){ scanNext(); }, 800);
     return;
   }
@@ -3070,11 +2949,17 @@ async function renderShiplistFromDB() {
     // 收集所有會員代號，批次查詢包裹資料
     var memberCodes = [...new Set(data.filter(function(t){return t.member_code}).map(function(t){return t.member_code}))];
     var memberAllPkgs = {};
+    var memberNoteMap = {};
     if(memberCodes.length > 0) {
       var { data: pkgRows } = await sb.from('packages').select('*').in('member_code', memberCodes);
       (pkgRows||[]).forEach(function(p){
         if(!memberAllPkgs[p.member_code]) memberAllPkgs[p.member_code] = [];
         memberAllPkgs[p.member_code].push(p);
+      });
+      // ★ 查詢客戶備註
+      var { data: memberRows } = await sb.from('members').select('member_code,note').in('member_code', memberCodes);
+      (memberRows||[]).forEach(function(m){
+        if(m.note) memberNoteMap[m.member_code] = m.note;
       });
     }
 
@@ -3091,6 +2976,9 @@ async function renderShiplistFromDB() {
       var details = t.details || '';
       var notes = t.notes || '';
       var allPkgs = memberAllPkgs[t.member_code] || [];
+
+      // ★ 客戶備註（紅色警示）
+      var memberNote = memberNoteMap[t.member_code] || '';
 
       // ★ 解析出貨方式
       var methodMatch = details.match(/出貨方式[：:]\s*(.+?)(\n|$)/);
@@ -3132,9 +3020,14 @@ async function renderShiplistFromDB() {
           .replace(/(出貨方式[：:]\s*.+)/g, '<span style="color:#1B4F8A;font-weight:700;font-size:13px">✈️ $1</span>')
           .replace(/(特殊需求[：:]\s*.+)/g, '<span style="color:#dc3c3c;font-weight:700;font-size:13px">⚠️ $1</span>')
           .replace(/(裝箱[：:]\s*.+)/g, '<span style="color:#e67e22;font-weight:700">📦 $1</span>')
-          .replace(/(付款[：:]\s*.+)/g, '<span style="color:var(--text3);font-style:italic">$1</span>')
-          .replace(/(包裹數[：:]\s*.+)/g, '<span style="color:#8e44ad;font-weight:700;font-size:13px">📮 $1</span>');
+          .replace(/(付款[：:]\s*.+)/g, '<span style="display:none">$1</span>')
+          .replace(/(包裹數[：:]\s*.+)/g, '<span style="color:#8e44ad;font-weight:700;font-size:13px">📮 出貨$1</span>');
         html += '<div style="font-size:12px;color:var(--text2);background:var(--bg);border-radius:6px;padding:10px;line-height:1.9;white-space:pre-line;margin-bottom:8px">'+styledDetails+'</div>';
+      }
+      // ★ 客戶備註醒目顯示
+      if(memberNote) {
+        html += '<div style="background:rgba(220,60,60,0.1);border:2px solid rgba(220,60,60,0.4);border-radius:8px;padding:10px;margin-bottom:8px;animation:pulse 2s infinite">'
+          + '<div style="font-size:13px;font-weight:800;color:#dc3c3c">⚠️ 客戶備註：'+memberNote+'</div></div>';
       }
       if(notes) {
         html += '<div style="font-size:11px;color:var(--red);background:rgba(220,60,60,0.05);border:1px solid rgba(220,60,60,0.15);border-radius:6px;padding:8px 10px;margin-bottom:8px;line-height:1.5">⚠️ 備註：'+notes+'</div>';
@@ -3149,44 +3042,26 @@ async function renderShiplistFromDB() {
           var tnHtml = tn.length > 4
             ? tn.slice(0,-4) + '<span style="color:#dc3c3c;font-weight:800">' + tn.slice(-4) + '</span>'
             : '<span style="color:#dc3c3c;font-weight:800">' + tn + '</span>';
-          var shelfTag = p.shelf ? ' <span style="background:rgba(220,60,60,0.1);color:#dc3c3c;font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px">📍'+p.shelf+'</span>' : '';
+          var shelfTag = p.shelf ? ' <span style="background:rgba(27,79,138,0.1);color:var(--accent);font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px">📍'+p.shelf+'</span>' : '';
           html += '<div style="font-family:monospace;font-size:12px;padding:3px 0;color:var(--text)">📦 '+tnHtml+shelfTag+'</div>';
         });
-        // ★ 客人全部在庫包裹的貨架摘要（含出貨包裹，出貨位置標紅）
+        // 客人全部在庫包裹的貨架摘要（含出貨的）
         var _cs = ['delivered','picked','transit','shipping'];
         var allInStock = allPkgs.filter(function(p){ return !_cs.includes(p.status); });
-        // 合併：在庫 + 本次出貨包裹（去重，因出貨包裹可能 status='shipping' 被排除）
-        var allWarehouse = allInStock.slice();
-        shipPkgs.forEach(function(sp){
-          if(!allWarehouse.find(function(p){ return p.tracking_no === sp.tracking_no; })) {
-            allWarehouse.push(sp);
+        // ★ 收集出貨包裹的貨架位置
+        var shipShelfSet = {};
+        shipPkgs.forEach(function(p){ if(p.shelf) shipShelfSet[p.shelf] = true; });
+        var shelfPositions = {};
+        allInStock.forEach(function(p){ if(p.shelf) shelfPositions[p.shelf] = (shelfPositions[p.shelf]||0)+1; });
+        // ★ 出貨貨架紅色、其他原色
+        var shelfSummary = Object.keys(shelfPositions).map(function(s){
+          if(shipShelfSet[s]) {
+            return '<span style="color:#dc3c3c;font-weight:700;background:rgba(220,60,60,0.1);padding:1px 5px;border-radius:3px">📍'+s+'('+shelfPositions[s]+')</span>';
           }
-        });
-        // 貨架統計 + 標記出貨位置
-        var shelfMap = {};
-        allWarehouse.forEach(function(p){
-          if(p.shelf) {
-            if(!shelfMap[p.shelf]) shelfMap[p.shelf] = { total:0, shipping:0 };
-            shelfMap[p.shelf].total++;
-          }
-        });
-        shipPkgs.forEach(function(p){
-          if(p.shelf && shelfMap[p.shelf]) shelfMap[p.shelf].shipping++;
-        });
-        // 生成摘要：出貨位置紅色，其他正常
-        var shelfSummary = Object.keys(shelfMap).sort().map(function(s){
-          var info = shelfMap[s];
-          if(info.shipping > 0) {
-            return '<span style="background:rgba(220,60,60,0.1);color:#dc3c3c;font-weight:700;padding:1px 6px;border-radius:3px">📍'+s+'('+info.total+')</span>';
-          }
-          return '📍'+s+'('+info.total+')';
+          return '📍'+s+'('+shelfPositions[s]+')';
         }).join(' ');
-        if(!shelfSummary && allPkgs.length > 0) {
-          var anyShelf = allPkgs.find(function(p){ return p.shelf; });
-          if(anyShelf) shelfSummary = '📍'+anyShelf.shelf;
-        }
-        if(allWarehouse.length > 0) {
-          html += '<div style="font-size:12px;color:var(--text2);margin-top:6px;padding-top:6px;border-top:1px dashed rgba(27,79,138,0.15)">📦 客人在庫包裹（<strong>'+allWarehouse.length+'</strong> 件）'+(shelfSummary ? ' '+shelfSummary : '')+'</div>';
+        if(allInStock.length > 0) {
+          html += '<div style="font-size:12px;color:var(--text2);margin-top:6px;padding-top:6px;border-top:1px dashed rgba(27,79,138,0.15)">📦 客人在庫包裹（<strong>'+allInStock.length+'</strong> 件）'+(shelfSummary ? ' '+shelfSummary : '')+'</div>';
         }
         html += '</div>';
       }
@@ -4069,6 +3944,19 @@ async function runStaffQueryDB() {
 // ══════════════════════════════════════════════════
 // ── 客戶資料搜尋（從 Supabase 連動）──
 // ══════════════════════════════════════════════════
+// ★ 儲存客戶備註
+async function saveMemberNote(memberId) {
+  var input = document.getElementById('member-note-'+memberId);
+  if(!input) return;
+  var note = input.value.trim();
+  var { error } = await sb.from('members').update({ note: note }).eq('id', memberId);
+  if(error) {
+    showToast('❌ 儲存失敗：'+(error.message||'未知錯誤'), 'red');
+  } else {
+    showToast('✅ 備註已儲存'+(note ? '：'+note : '（已清除）'), 'green');
+  }
+}
+
 async function searchCustomerDB() {
   var input = document.getElementById('customer-search-input');
   var code = (input.value||'').trim().toUpperCase();
@@ -4133,7 +4021,15 @@ async function searchCustomerDB() {
           + '</div>'
           + '<div style="font-size:11px;color:var(--text3);margin-top:6px">本月空運：'+thisMonthAirKg.toFixed(1)+' kg'
           + (grade==='一般' ? '（滿 100kg 升 VIP）' : (grade==='VIP' ? '（滿 300kg 升 VVIP）' : ''))
-          + '</div></div>';
+          + '</div>'
+          // ★ 客戶備註（含儲存按鈕）
+          + (m.note ? '<div style="background:rgba(220,60,60,0.08);border-left:3px solid var(--red);border-radius:0 6px 6px 0;padding:8px 12px;margin-top:8px;font-size:13px;font-weight:700;color:var(--red)">⚠️ '+m.note+'</div>' : '')
+          + '<div style="margin-top:8px;display:flex;gap:8px;align-items:center">'
+          + '<span style="font-size:12px;color:var(--text3);white-space:nowrap">📝 備註</span>'
+          + '<input id="member-note-'+m.id+'" value="'+(m.note||'').replace(/"/g,'&quot;')+'" placeholder="例：付款後才出貨、黑名單等" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none">'
+          + '<button onclick="saveMemberNote(\''+m.id+'\')" style="background:var(--accent);border:none;color:white;font-size:12px;font-weight:700;padding:8px 16px;border-radius:6px;cursor:pointer;white-space:nowrap">儲存</button>'
+          + '</div>'
+          + '</div>';
       });
     }
 
