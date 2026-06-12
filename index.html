@@ -200,6 +200,13 @@ html, body { height:100%; background:var(--bg); font-family:'Noto Sans TC',syste
 .pill { display:inline-block; padding:4px 12px; border-radius:20px; font-size:12px; font-weight:600; }
 .pill-new { background:rgba(27,79,138,0.1); color:var(--accent); }
 .pill-in { background:var(--green-bg); color:var(--green); }
+/* ── Storage countdown / overdue (staff) ── */
+.storage-tag { display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:3px;margin-left:4px;white-space:nowrap; }
+.storage-tag.warn { background:rgba(220,160,0,0.12);color:#b07520;animation:blink-warn 2s infinite; }
+.storage-tag.overdue { background:rgba(220,60,60,0.1);color:#c0392b;animation:blink-warn 1.5s infinite; }
+.storage-tag.ok { background:rgba(40,180,100,0.08);color:#1A8050; }
+@keyframes blink-warn { 0%,100%{opacity:1} 50%{opacity:0.65} }
+.overdue-alert { background:linear-gradient(135deg,rgba(220,60,60,0.1),rgba(220,60,60,0.04));border:2px solid rgba(220,60,60,0.3);border-radius:8px;padding:10px 12px;margin-bottom:8px;animation:blink-warn 2s infinite; }
 .pill-dup { background:var(--red-bg); color:var(--red); }
 
 /* Weight section */
@@ -1211,6 +1218,34 @@ function doLogout() {
 }
 
 // ── Ship List（本地陣列已清空，實際由 renderShiplistFromDB 從 Supabase 讀取）──
+// ── 倉儲保管期計算（入庫後30天免費，逾期 ₩1,000/NT$25 每天）──
+function calcStorageInfo(rawDate) {
+  var info = { remainDays:30, overdueDays:0, overdueFeeKRW:0, overdueFeeTWD:0, isWarning:false, isOverdue:false, label:'', cssClass:'ok' };
+  if(!rawDate) return info;
+  var entryDate = new Date(rawDate);
+  var now = new Date();
+  var diffMs = now - entryDate;
+  var diffDays = Math.floor(diffMs / (1000*60*60*24));
+  info.remainDays = 30 - diffDays;
+  if(info.remainDays < 0) info.remainDays = 0;
+  if(diffDays > 30) {
+    info.overdueDays = diffDays - 30;
+    info.overdueFeeKRW = info.overdueDays * 1000;
+    info.overdueFeeTWD = info.overdueDays * 25;
+    info.isOverdue = true;
+    info.label = '⚠️逾期' + info.overdueDays + '天';
+    info.cssClass = 'overdue';
+  } else if(info.remainDays <= 7) {
+    info.isWarning = true;
+    info.label = '⏰剩' + info.remainDays + '天';
+    info.cssClass = 'warn';
+  } else {
+    info.label = '剩' + info.remainDays + '天';
+    info.cssClass = 'ok';
+  }
+  return info;
+}
+
 const shipOrders = [];
 
 function renderShiplist() {
@@ -3021,7 +3056,8 @@ async function renderShiplistFromDB() {
           .replace(/(特殊需求[：:]\s*.+)/g, '<span style="color:#dc3c3c;font-weight:700;font-size:13px">⚠️ $1</span>')
           .replace(/(裝箱[：:]\s*.+)/g, '<span style="color:#e67e22;font-weight:700">📦 $1</span>')
           .replace(/(付款[：:]\s*.+)/g, '<span style="display:none">$1</span>')
-          .replace(/(包裹數[：:]\s*.+)/g, '<span style="color:#8e44ad;font-weight:700;font-size:13px">📮 出貨$1</span>');
+          .replace(/(包裹數[：:]\s*.+)/g, '<span style="color:#8e44ad;font-weight:700;font-size:13px">📮 出貨$1</span>')
+          .replace(/(逾期倉儲費[：:]\s*.+)/g, '<span style="color:#c0392b;font-weight:800;font-size:14px;background:rgba(220,60,60,0.08);padding:2px 8px;border-radius:4px">⚠️ $1</span>');
         html += '<div style="font-size:12px;color:var(--text2);background:var(--bg);border-radius:6px;padding:10px;line-height:1.9;white-space:pre-line;margin-bottom:8px">'+styledDetails+'</div>';
       }
       // ★ 客戶備註醒目顯示
@@ -3033,17 +3069,26 @@ async function renderShiplistFromDB() {
         html += '<div style="font-size:11px;color:var(--red);background:rgba(220,60,60,0.05);border:1px solid rgba(220,60,60,0.15);border-radius:6px;padding:8px 10px;margin-bottom:8px;line-height:1.5">⚠️ 備註：'+notes+'</div>';
       }
 
-      // 出貨包裹（★ 簡化版：只顯示單號 + 在庫摘要）
+      // 出貨包裹（★ 簡化版：只顯示單號 + 在庫摘要 + 逾期天數）
+      var totalOverdueKRW = 0;
+      var totalOverdueTWD = 0;
       if(shipPkgs.length > 0) {
         html += '<div style="background:rgba(27,79,138,0.04);border:1px solid rgba(27,79,138,0.1);border-radius:6px;padding:10px;margin-bottom:8px">';
-        // 出貨單號（每行一個）
+        // 出貨單號（每行一個 + 逾期標籤）
         shipPkgs.forEach(function(p){
           var tn = p.tracking_no || '';
           var tnHtml = tn.length > 4
             ? tn.slice(0,-4) + '<span style="color:#dc3c3c;font-weight:800">' + tn.slice(-4) + '</span>'
             : '<span style="color:#dc3c3c;font-weight:800">' + tn + '</span>';
           var shelfTag = p.shelf ? ' <span style="background:rgba(27,79,138,0.1);color:var(--accent);font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px">📍'+p.shelf+'</span>' : '';
-          html += '<div style="font-family:monospace;font-size:12px;padding:3px 0;color:var(--text)">📦 '+tnHtml+shelfTag+'</div>';
+          // ★ 倉儲保管狀態
+          var sInfo = calcStorageInfo(p.scanned_at || p.created_at);
+          var storageTag = ' <span class="storage-tag '+sInfo.cssClass+'">'+sInfo.label+'</span>';
+          if(sInfo.isOverdue) {
+            totalOverdueKRW += sInfo.overdueFeeKRW;
+            totalOverdueTWD += sInfo.overdueFeeTWD;
+          }
+          html += '<div style="font-family:monospace;font-size:12px;padding:3px 0;color:var(--text)">📦 '+tnHtml+shelfTag+storageTag+'</div>';
         });
         // 客人全部在庫包裹的貨架摘要（含出貨的）
         var _cs = ['delivered','picked','transit','shipping'];
@@ -3067,6 +3112,19 @@ async function renderShiplistFromDB() {
       }
 
       // 包裝完成表單（未完成時顯示）
+      // ★ 逾期倉儲費提醒（出貨時顯示）
+      if(totalOverdueKRW > 0 && !isDone) {
+        html += '<div class="overdue-alert">'
+          + '<div style="font-size:13px;font-weight:800;color:#dc3c3c;margin-bottom:4px">⚠️ 逾期倉儲費</div>'
+          + '<div style="font-size:12px;color:var(--text2);line-height:1.6">此客人包裹已超過 30 天免費保管期</div>'
+          + '<div style="font-size:16px;font-weight:800;color:#dc3c3c;margin-top:4px">₩'+totalOverdueKRW.toLocaleString()+' / NT$'+totalOverdueTWD.toLocaleString()+'</div>'
+          + '<div style="font-size:11px;color:var(--text3);margin-top:2px">（₩1,000 / NT$25 每天，包裝完成後與運費一起收取）</div>'
+          + '<input type="hidden" id="ship-overdue-krw-'+t.id+'" value="'+totalOverdueKRW+'">'
+          + '<input type="hidden" id="ship-overdue-twd-'+t.id+'" value="'+totalOverdueTWD+'">'
+          + '</div>';
+      } else {
+        html += '<input type="hidden" id="ship-overdue-krw-'+t.id+'" value="0"><input type="hidden" id="ship-overdue-twd-'+t.id+'" value="0">';
+      }
       if(!isDone) {
         html += '<div style="background:rgba(40,180,100,0.04);border:1px solid rgba(40,180,100,0.15);border-radius:8px;padding:12px;margin-top:6px">'
           + '<div style="font-size:12px;font-weight:700;color:var(--green);margin-bottom:10px">📦 包裝完成填寫</div>'
@@ -3141,7 +3199,18 @@ async function renderShiplistFromDB() {
         if(t.ship_logistic) html += '<div style="font-size:12px;color:var(--text2)">報關行：<strong>'+t.ship_logistic+'</strong></div>';
         if(t.ship_cost) {
           var twdAmt = twdMatch ? 'NT$'+Number(twdMatch[1]).toLocaleString() : '';
-          html += '<div style="font-size:13px;color:var(--accent);font-weight:700;margin-top:4px">運費：₩'+Number(t.ship_cost).toLocaleString()+(twdAmt ? '（'+twdAmt+'）' : '')+'</div>';
+          // ★ 解析逾期費
+          var overdueMatch2 = tn.match(/逾期費:(\d+)/);
+          var overdueTwdMatch2 = tn.match(/逾期TWD:(\d+)/);
+          var doneOverdueKRW = overdueMatch2 ? parseInt(overdueMatch2[1]) : 0;
+          var doneOverdueTWD = overdueTwdMatch2 ? parseInt(overdueTwdMatch2[1]) : 0;
+          if(doneOverdueKRW > 0) {
+            var shippingOnly = Number(t.ship_cost) - doneOverdueKRW;
+            var shippingOnlyTwd = twdMatch ? Number(twdMatch[1]) - doneOverdueTWD : 0;
+            html += '<div style="font-size:12px;color:var(--text2);margin-top:4px">運費：₩'+shippingOnly.toLocaleString()+(shippingOnlyTwd > 0 ? '（NT$'+shippingOnlyTwd.toLocaleString()+'）' : '')+'</div>';
+            html += '<div style="font-size:12px;color:#c0392b;font-weight:600">逾期倉儲費：₩'+doneOverdueKRW.toLocaleString()+(doneOverdueTWD > 0 ? '（NT$'+doneOverdueTWD.toLocaleString()+'）' : '')+'</div>';
+          }
+          html += '<div style="font-size:13px;color:var(--accent);font-weight:700;margin-top:4px">合計：₩'+Number(t.ship_cost).toLocaleString()+(twdAmt ? '（'+twdAmt+'）' : '')+'</div>';
         }
         if(t.ship_photo) html += '<div style="margin-top:6px"><img src="'+t.ship_photo+'" style="width:100%;max-height:160px;object-fit:cover;border-radius:6px;border:1px solid var(--border)"></div>';
         html += '</div>';
@@ -3317,21 +3386,37 @@ function calcShipCost(taskId) {
   var newBoxKRW = isNewBox ? NEW_BOX_FEE_KRW : 0;
   var newBoxTWD = isNewBox ? NEW_BOX_FEE_TWD : 0;
 
-  var totalKRW = costKRW + newBoxKRW;
-  var totalTWD = costTWD + newBoxTWD;
+  // ★ 逾期倉儲費
+  var overdueEl = document.getElementById('ship-overdue-krw-'+taskId);
+  var overdueTwdEl = document.getElementById('ship-overdue-twd-'+taskId);
+  var overdueKRW = overdueEl ? parseInt(overdueEl.value) || 0 : 0;
+  var overdueTWD = overdueTwdEl ? parseInt(overdueTwdEl.value) || 0 : 0;
 
-  // ★ 顯示雙幣
+  var shippingKRW = costKRW + newBoxKRW;
+  var shippingTWD = costTWD + newBoxTWD;
+  var totalKRW = shippingKRW + overdueKRW;
+  var totalTWD = shippingTWD + overdueTWD;
+
+  // ★ 顯示雙幣（含逾期費）
   var methodLabel = method === 'air_direct' ? '直飛' : (method === 'sea' ? '海快' : '轉機');
   var display = '₩' + totalKRW.toLocaleString() + '（NT$' + totalTWD.toLocaleString() + '）';
   var detail = methodLabel + ' ' + billingW + 'kg';
   if(isNewBox) detail += ' +新箱';
-  costEl.innerHTML = '<div style="font-size:16px;font-weight:800;color:var(--accent)">₩' + totalKRW.toLocaleString() + '</div>'
-    + '<div style="font-size:13px;color:#e67e22;font-weight:600">NT$' + totalTWD.toLocaleString() + '</div>'
-    + '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + detail + '</div>';
+  costEl.innerHTML = '<div style="font-size:14px;font-weight:700;color:var(--text2);margin-bottom:2px">運費：₩' + shippingKRW.toLocaleString() + ' / NT$' + shippingTWD.toLocaleString() + '</div>';
+  if(overdueKRW > 0) {
+    costEl.innerHTML += '<div style="font-size:13px;font-weight:700;color:#c0392b;margin-bottom:2px">逾期費：₩' + overdueKRW.toLocaleString() + ' / NT$' + overdueTWD.toLocaleString() + '</div>';
+  }
+  costEl.innerHTML += '<div style="font-size:18px;font-weight:800;color:var(--accent)">合計：₩' + totalKRW.toLocaleString() + '</div>'
+    + '<div style="font-size:14px;color:#e67e22;font-weight:600">NT$' + totalTWD.toLocaleString() + '</div>'
+    + '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + detail + (overdueKRW > 0 ? ' +逾期費' : '') + '</div>';
 
   // 儲存數據
   costEl.dataset.cost = totalKRW;
   costEl.dataset.costTwd = totalTWD;
+  costEl.dataset.shippingCost = shippingKRW;
+  costEl.dataset.shippingCostTwd = shippingTWD;
+  costEl.dataset.overdueKrw = overdueKRW;
+  costEl.dataset.overdueTwd = overdueTWD;
   costEl.dataset.method = method;
   costEl.dataset.billingWeight = billingW;
   costEl.dataset.boxName = boxName;
@@ -3436,6 +3521,12 @@ async function confirmShipPacking(taskId) {
     }
 
     var methodLabel = shipMethod === 'air_direct' ? '直飛' : (shipMethod === 'sea' ? '海快' : '轉機');
+    // ★ 讀取逾期費
+    var overdueKRW = costEl && costEl.dataset.overdueKrw ? parseInt(costEl.dataset.overdueKrw) : 0;
+    var overdueTWD = costEl && costEl.dataset.overdueTwd ? parseInt(costEl.dataset.overdueTwd) : 0;
+    var shippingOnlyKRW = costEl && costEl.dataset.shippingCost ? parseInt(costEl.dataset.shippingCost) : shipCostKRW;
+    var shippingOnlyTWD = costEl && costEl.dataset.shippingCostTwd ? parseInt(costEl.dataset.shippingCostTwd) : shipCostTWD;
+
     var confirmMsg = '確認包裝完成？\n\n'
       + '📦 箱子：' + (boxName || '—') + '\n'
       + '⚖️ 實際重量：' + shipWeight + ' kg\n'
@@ -3443,7 +3534,9 @@ async function confirmShipPacking(taskId) {
       + '🚚 出貨方式：' + methodLabel + '\n'
       + '🏢 報關行：' + shipTracking + '\n'
       + (isNewBox ? '📦 新箱：是\n' : '')
-      + '💰 運費：₩' + shipCostKRW.toLocaleString() + '（NT$' + shipCostTWD.toLocaleString() + '）\n'
+      + '💰 運費：₩' + shippingOnlyKRW.toLocaleString() + '（NT$' + shippingOnlyTWD.toLocaleString() + '）\n'
+      + (overdueKRW > 0 ? '⚠️ 逾期倉儲費：₩' + overdueKRW.toLocaleString() + '（NT$' + overdueTWD.toLocaleString() + '）\n' : '')
+      + (overdueKRW > 0 ? '💰 合計：₩' + shipCostKRW.toLocaleString() + '（NT$' + shipCostTWD.toLocaleString() + '）\n' : '')
       + '📷 照片：✅ 已上傳';
     if(!confirm(confirmMsg)) return;
 
@@ -3460,9 +3553,10 @@ async function confirmShipPacking(taskId) {
       }
     }
 
-    // ★ 組合備註資訊（含箱子、計費重量、TWD、新箱）
+    // ★ 組合備註資訊（含箱子、計費重量、TWD、新箱、逾期費）
     var shipNotes = '箱子:' + boxName + '|計費:' + billingWeight + 'kg|方式:' + methodLabel + '|TWD:' + shipCostTWD;
     if(isNewBox) shipNotes += '|新箱:是';
+    if(overdueKRW > 0) shipNotes += '|逾期費:' + overdueKRW + '|逾期TWD:' + overdueTWD;
 
     // 更新 task 狀態 + 儲存包裝資訊
     var { error: updateErr } = await sb.from('tasks').update({
@@ -3758,7 +3852,9 @@ function renderPkgCard(p, idx) {
     + '<span>貨架：'+(p.shelf||'—')+'</span>'
     + (photos.length > 0 ? '<span style="color:var(--accent)">📷'+photos.length+'張</span>' : '')
     + '</div>'
-    + '<div style="font-size:11px;color:var(--text3);margin-top:4px">入庫：'+entryDate+(p.processed_by_name?' · '+p.processed_by_name:'')+'</div>'
+    + '<div style="font-size:11px;color:var(--text3);margin-top:4px">入庫：'+entryDate+(p.processed_by_name?' · '+p.processed_by_name:'')
+    + (function(){ var si = calcStorageInfo(p.scanned_at||p.created_at); return ' <span class="storage-tag '+si.cssClass+'">'+si.label+'</span>'; })()
+    + '</div>'
     // 照片縮圖（最多顯示3張）
     + (photos.length > 0 ? '<div style="display:flex;gap:6px;margin-top:8px;overflow-x:auto">' + photos.slice(0,3).map(function(url){ var resolved = resolvePhotoUrl(url); return '<img src="'+resolved+'" style="width:50px;height:50px;object-fit:cover;border-radius:6px;border:1px solid var(--border)" onerror="this.style.display=\'none\'">'; }).join('') + (photos.length > 3 ? '<div style="width:50px;height:50px;display:flex;align-items:center;justify-content:center;background:var(--bg);border-radius:6px;font-size:12px;color:var(--text3)">+' + (photos.length-3) + '</div>' : '') + '</div>' : '')
     + '</div>';
@@ -3774,7 +3870,8 @@ function openPkgDetailModal(idx) {
   document.getElementById('pkg-detail-tracking').textContent = p.tracking_no || '—';
   document.getElementById('pkg-detail-status').innerHTML = '<span style="padding:4px 12px;border-radius:6px;background:rgba(27,79,138,0.1);color:var(--accent);font-weight:600;font-size:13px">' + (_statusMap[p.status]||p.status||'—') + '</span>';
   var entryDate = p.scanned_at ? kstDateTimeStr(p.scanned_at,{}) : (p.created_at ? kstDateTimeStr(p.created_at,{}) : '—');
-  document.getElementById('pkg-detail-time').textContent = entryDate + (p.processed_by_name ? ' · ' + p.processed_by_name : '');
+  var detailSInfo = calcStorageInfo(p.scanned_at || p.created_at);
+  document.getElementById('pkg-detail-time').innerHTML = entryDate + (p.processed_by_name ? ' · ' + p.processed_by_name : '') + ' <span class="storage-tag '+detailSInfo.cssClass+'">'+detailSInfo.label+'</span>';
 
   // 填入可編輯欄位
   document.getElementById('pkg-edit-member').value = p.member_code || '';
@@ -4029,7 +4126,23 @@ async function searchCustomerDB() {
           + '<input id="member-note-'+m.id+'" value="'+(m.note||'').replace(/"/g,'&quot;')+'" placeholder="例：付款後才出貨、黑名單等" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none">'
           + '<button onclick="saveMemberNote(\''+m.id+'\')" style="background:var(--accent);border:none;color:white;font-size:12px;font-weight:700;padding:8px 16px;border-radius:6px;cursor:pointer;white-space:nowrap">儲存</button>'
           + '</div>'
+          + '<div id="wallet-info-'+m.member_code+'" style="margin-top:8px;background:rgba(30,140,60,0.06);border:1px solid rgba(30,140,60,0.15);border-radius:8px;padding:10px 12px"></div>'
           + '</div>';
+        // 載入錢包餘額
+        (async function(mc){
+          try {
+            var { data: wal } = await sb.from('wallet_balances').select('*').eq('member_code',mc).single();
+            var el = document.getElementById('wallet-info-'+mc);
+            if(el && wal) {
+              el.innerHTML = '<div style="font-size:12px;font-weight:700;color:#2e7d32;margin-bottom:4px">💰 預付款餘額</div>'
+                + '<span style="font-size:14px;font-weight:800;color:#2e7d32">NT$ '+(wal.balance_twd||0).toLocaleString()+'</span>'
+                + '<span style="font-size:11px;color:var(--text3);margin:0 8px">·</span>'
+                + '<span style="font-size:14px;font-weight:800;color:#2e7d32">₩ '+(wal.balance_krw||0).toLocaleString()+'</span>';
+            } else if(el) {
+              el.innerHTML = '<div style="font-size:11px;color:var(--text3)">💰 預付款餘額：尚無儲值紀錄</div>';
+            }
+          } catch(e) { /* no wallet record */ }
+        })(m.member_code);
       });
     }
 
@@ -4062,6 +4175,7 @@ async function searchCustomerDB() {
           + '<span>'+(p.weight_kg||0)+' kg</span>'
           + '<span>📍 貨架：'+(p.shelf||'—')+'</span>'
           + '<span>📅 '+entryDate+'</span>'
+          + (function(){ var si = calcStorageInfo(p.scanned_at||p.created_at); return '<span class="storage-tag '+si.cssClass+'">'+si.label+'</span>'; })()
           + (p.processed_by_name ? '<span>👷 '+p.processed_by_name+'</span>' : '')
           + '</div>';
         // 照片縮圖
