@@ -1730,6 +1730,8 @@ let btDevice = null;
 let btConnected = false;
 let batchMode = false;
 let batchCount = 0;
+let batchLastMemberCode = '';
+let batchLastShelf = '';
 
 function toggleBatchMode() {
   batchMode = !batchMode;
@@ -1740,10 +1742,12 @@ function toggleBatchMode() {
     countEl.style.display = '';
     batchCount = 0;
     countEl.textContent = '本批 0 件';
-    showToast('⚡ 批量模式已開啟', 'green');
+    showToast('⚡ 批量模式已開啟（同客戶自動帶入會員+貨架）', 'green');
   } else {
     toggle.classList.remove('batch-on');
     countEl.style.display = 'none';
+    batchLastMemberCode = '';
+    batchLastShelf = '';
     showToast('批量模式已關閉');
   }
 }
@@ -1852,20 +1856,22 @@ function scanNext() {
   currentPkg = null;
   uploadedPhotos = [];
   document.getElementById('photo-grid').innerHTML = '<div class="photo-add" onclick="document.getElementById(\'photo-input\').click()">＋</div>';
-  // Reset shelf
-  document.getElementById('shelf-letter').value = '';
-  document.getElementById('shelf-manual').value = '';
-  document.getElementById('shelf-result').textContent = '—';
-  const posSelect = document.getElementById('shelf-pos-select');
-  if(posSelect) posSelect.value = '上';
-  shelfPos = '上';
+  // ★ 批量模式：保留上一件的貨架位置和會員代號
+  if(!batchMode) {
+    document.getElementById('shelf-letter').value = '';
+    document.getElementById('shelf-manual').value = '';
+    document.getElementById('shelf-result').textContent = '—';
+    const posSelect = document.getElementById('shelf-pos-select');
+    if(posSelect) posSelect.value = '上';
+    shelfPos = '上';
+    var mci = document.getElementById('member-code-input');
+    if(mci) mci.value = '';
+  }
   document.getElementById('weight-input').value = '';
   document.getElementById('weight-display').textContent = '0.00';
   document.getElementById('inbound-note').value = '';
   var unc = document.getElementById('is-unclaimed');
   if(unc) { unc.checked = false; }
-  var mci = document.getElementById('member-code-input');
-  if(mci) mci.value = '';
   showScreen('screen-scan');
   // ★ Bug3修復：移除多餘的 startCamera，showScreen('screen-scan') 內部已排程 500ms 後啟動
 }
@@ -1969,12 +1975,12 @@ function startCamera() {
   html5QrScanner.start(
     { facingMode: 'environment' },
     { fps: 15, qrbox: { width: boxW, height: boxH } },
-    function onScanSuccess(decodedText, decodedResult) {
+    async function onScanSuccess(decodedText, decodedResult) {
       console.log('✅ decoded:', decodedText);
       captureFrameAsPhoto();
       var autoPhotos = uploadedPhotos.slice();
       stopCamera();
-      lookupBarcode(decodedText);
+      await lookupBarcode(decodedText);
       if(autoPhotos.length > 0) {
         uploadedPhotos = autoPhotos;
         renderPhotoGrid();
@@ -2180,14 +2186,71 @@ function toggleUnclaimed(checked) {
 }
 
 // ── Lookup ────────────────────────────────────────
-function lookupBarcode(code) {
+async function lookupBarcode(code) {
   code = (code||'').trim().toUpperCase();
   if(!code) { showToast('請輸入包裹單號'); return; }
 
-  // Try find in DB
+  // ★ 防呆：先查 Supabase 此單號是否已入庫
+  if(sb) {
+    try {
+      var { data: existing } = await sb.from('packages')
+        .select('*')
+        .eq('tracking_no', code)
+        .limit(1);
+
+      if(existing && existing.length > 0) {
+        var dbPkg = existing[0];
+
+        // ── 已入庫：重複掃碼防呆 ──
+        if(dbPkg.status === 'arrived') {
+          var memberName = '';
+          if(dbPkg.member_code) {
+            var cached = members[dbPkg.member_code];
+            if(cached) { memberName = cached.name; }
+            else { try { var { data: mArr } = await sb.from('members').select('name').eq('member_code', dbPkg.member_code).limit(1); if(mArr && mArr.length > 0) memberName = mArr[0].name; } catch(e){} }
+          }
+          var entryTime = dbPkg.scanned_at ? new Date(dbPkg.scanned_at).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+          var dupMember = (dbPkg.member_code || '無主') + (memberName ? '（' + memberName + '）' : '');
+
+          // 批量模式：Toast 警告後自動跳下一件
+          if(batchMode) {
+            showToast('⛔ ' + code + ' 已入庫！' + dupMember + ' · 貨架 ' + (dbPkg.shelf||'—') + '　跳過...', 'red');
+            setTimeout(function(){ startCamera(); }, 1500);
+            return;
+          }
+
+          // 一般模式：進入詳情頁但顯示醒目警告 + 禁用送出
+          var pkg = {trackNo:code, memberCode:dbPkg.member_code, status:'arrived', weight:dbPkg.weight_kg, shelf:dbPkg.shelf, note:dbPkg.note, photos:dbPkg.photo_urls||[], dbId:dbPkg.id};
+          packageDB[code] = pkg;
+          currentPkg = pkg;
+          uploadedPhotos = [];
+          renderDetailScreen(pkg);
+          showScreen('screen-detail');
+          var banner = document.getElementById('status-banner');
+          banner.style.background = 'rgba(220,60,60,0.12)';
+          banner.style.color = '#c0392b';
+          banner.innerHTML = '<div style="width:100%">'
+            + '<div style="font-size:16px;font-weight:700;margin-bottom:6px">⛔ 此包裹已入庫！請勿重複送出</div>'
+            + '<div style="font-size:13px;line-height:1.8">'
+            + '會員：<strong>' + dupMember + '</strong><br>'
+            + '貨架：<strong>' + (dbPkg.shelf||'—') + '</strong>　'
+            + '重量：<strong>' + (dbPkg.weight_kg||0) + ' kg</strong><br>'
+            + '入庫：' + entryTime + '　' + (dbPkg.processed_by_name||'')
+            + '</div></div>';
+          var confirmBtn = document.querySelector('.btn-confirm');
+          if(confirmBtn) { confirmBtn.disabled = true; confirmBtn.innerHTML = '<span>⛔</span> 已入庫（不可重複送出）'; confirmBtn.style.opacity = '0.5'; }
+          return;
+        }
+
+        // 存在但非 arrived → 帶入 DB 資料
+        packageDB[code] = {trackNo:code, memberCode:dbPkg.member_code, status:dbPkg.status||'pending', weight:dbPkg.weight_kg, note:dbPkg.note, photos:dbPkg.photo_urls||[], dbId:dbPkg.id};
+      }
+    } catch(e) { console.error('Duplicate check error:', e); }
+  }
+
+  // ── 正常流程 ──
   let pkg = packageDB[code];
   if(!pkg) {
-    // Create new entry for unknown package
     pkg = {trackNo:code, memberCode:null, status:'unknown', weight:null, photos:[], note:''};
     packageDB[code] = pkg;
   }
@@ -2196,6 +2259,28 @@ function lookupBarcode(code) {
   uploadedPhotos = [];
   renderDetailScreen(pkg);
   showScreen('screen-detail');
+  // 恢復送出按鈕
+  var confirmBtn = document.querySelector('.btn-confirm');
+  if(confirmBtn) { confirmBtn.disabled = false; confirmBtn.innerHTML = '<span>📤</span> 送出入庫'; confirmBtn.style.opacity = ''; }
+
+  // ★ 批量模式：自動帶入上一件的會員代號和貨架位置
+  if(batchMode && batchLastMemberCode && !pkg.memberCode) {
+    currentPkg.memberCode = batchLastMemberCode;
+    var mci = document.getElementById('member-code-input');
+    if(mci) mci.value = batchLastMemberCode;
+    var cachedMember = members[batchLastMemberCode];
+    if(cachedMember) {
+      var nameEl = document.getElementById('member-name');
+      var emailEl = document.getElementById('member-email');
+      if(nameEl) nameEl.textContent = cachedMember.name;
+      if(emailEl) emailEl.textContent = cachedMember.email || '';
+    } else {
+      _doMemberLookup(batchLastMemberCode, false);
+    }
+    if(batchLastShelf) { applyShelfToUI(batchLastShelf); }
+    showToast('⚡ 同客戶連續入庫：' + batchLastMemberCode + (batchLastShelf ? ' · 貨架 ' + batchLastShelf : ''), 'green');
+    setTimeout(function(){ var wi = document.getElementById('weight-input'); if(wi) wi.focus(); }, 300);
+  }
 }
 
 function renderDetailScreen(pkg) {
@@ -2491,6 +2576,13 @@ async function confirmInbound() {
 
   // Show success
   const member = currentPkg.memberCode ? members[currentPkg.memberCode] : null;
+
+  // ★ 批量模式：記住本次的會員代號和貨架，下一件自動帶入
+  if(batchMode && currentPkg.memberCode) {
+    batchLastMemberCode = currentPkg.memberCode;
+    batchLastShelf = getShelfValue();
+    if(batchLastShelf === '—') batchLastShelf = '';
+  }
 
   // ── 批量模式：快速顯示成功，自動下一件 ──
   if(batchMode) {
