@@ -1867,7 +1867,7 @@ function scanNext() {
   var mci = document.getElementById('member-code-input');
   if(mci) mci.value = '';
   showScreen('screen-scan');
-  setTimeout(function(){ startCamera(); }, 300);
+  // ★ Bug3修復：移除多餘的 startCamera，showScreen('screen-scan') 內部已排程 500ms 後啟動
 }
 
 // ── Toast ─────────────────────────────────────────
@@ -1972,8 +1972,13 @@ function startCamera() {
     function onScanSuccess(decodedText, decodedResult) {
       console.log('✅ decoded:', decodedText);
       captureFrameAsPhoto();
+      var autoPhotos = uploadedPhotos.slice();
       stopCamera();
       lookupBarcode(decodedText);
+      if(autoPhotos.length > 0) {
+        uploadedPhotos = autoPhotos;
+        renderPhotoGrid();
+      }
     },
     function onScanFailure() {}
   ).catch(function(err) {
@@ -2446,8 +2451,8 @@ async function confirmInbound() {
   // 寫入 Supabase（含照片上傳）
   var saveResult = await saveToSupabase(currentPkg);
 
-  // 恢復按鈕
-  if(confirmBtn) {
+  // 恢復按鈕（★ 批量模式下保持禁用，避免重複點擊 Bug4）
+  if(confirmBtn && !batchMode) {
     confirmBtn.disabled = false;
     confirmBtn.innerHTML = '<span>📤</span> 送出入庫';
     confirmBtn.style.opacity = '';
@@ -2458,6 +2463,8 @@ async function confirmInbound() {
     var errDetail = (saveResult && saveResult.msg) ? saveResult.msg : '未知錯誤';
     showToast('❌ 入庫寫入失敗：' + errDetail, 'red');
     console.error('❌ 入庫寫入失敗，不計入 todayCount。錯誤：', errDetail);
+    // 失敗時也要恢復按鈕
+    if(confirmBtn) { confirmBtn.disabled = false; confirmBtn.innerHTML = '<span>📤</span> 送出入庫'; confirmBtn.style.opacity = ''; }
     // 提示可能原因
     setTimeout(function(){
       showToast('請檢查：① packages 表是否存在 ② tracking_no 是否有 UNIQUE 約束 ③ RLS 政策', 'red');
@@ -2490,9 +2497,19 @@ async function confirmInbound() {
     batchCount++;
     var countEl = document.getElementById('batch-count');
     if(countEl) countEl.textContent = '本批 ' + batchCount + ' 件';
-    showBatchSuccess(currentPkg.trackNo, parseFloat(weight).toFixed(1));
-    // 自動跳到下一件
-    setTimeout(function(){ scanNext(); }, 800);
+    // ★ Bug2修復：先在當前畫面(screen-detail)顯示 Toast 即時回饋
+    showToast('✅ ' + currentPkg.trackNo + ' ' + parseFloat(weight).toFixed(1) + 'kg 已入庫！（本批 ' + batchCount + ' 件）', 'green');
+    // ★ Bug4修復：跳轉前恢復按鈕
+    var batchTrack = currentPkg.trackNo;
+    var batchWeight = parseFloat(weight).toFixed(1);
+    setTimeout(function(){
+      // 恢復確認按鈕
+      var btn = document.querySelector('.btn-confirm');
+      if(btn) { btn.disabled = false; btn.innerHTML = '<span>📤</span> 送出入庫'; btn.style.opacity = ''; }
+      scanNext();
+      // ★ 切回掃碼畫面後再顯示綠色橫幅
+      showBatchSuccess(batchTrack, batchWeight);
+    }, 800);
     return;
   }
 
