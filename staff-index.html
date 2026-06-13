@@ -3224,6 +3224,8 @@ async function renderShiplistFromDB() {
           .replace(/(出貨單號[：:]\s*.+)/g, '<span style="display:none">$1</span>')
           .replace(/(包裹數[：:]\s*.+)/g, '<span style="color:#8e44ad;font-weight:700;font-size:13px">📮 出貨$1</span>')
           .replace(/(逾期倉儲費[：:]\s*.+)/g, '<span style="color:#c0392b;font-weight:800;font-size:14px;background:rgba(220,60,60,0.08);padding:2px 8px;border-radius:4px">⚠️ $1</span>');
+        // ★ 清除隱藏項目造成的連續空行
+        styledDetails = styledDetails.replace(/(<span style="display:none">[^<]*<\/span>\n?)/g, '').replace(/\n{2,}/g, '\n').trim();
         html += '<div style="font-size:12px;color:var(--text2);background:var(--bg);border-radius:6px;padding:10px;line-height:1.9;white-space:pre-line;margin-bottom:8px">'+styledDetails+'</div>';
       }
       // ★ 客戶備註醒目顯示
@@ -3247,17 +3249,18 @@ async function renderShiplistFromDB() {
             ? tn.slice(0,-4) + '<span style="color:#dc3c3c;font-weight:800">' + tn.slice(-4) + '</span>'
             : '<span style="color:#dc3c3c;font-weight:800">' + tn + '</span>';
           var shelfTag = p.shelf ? ' <span style="background:rgba(27,79,138,0.1);color:var(--accent);font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px">📍'+p.shelf+'</span>' : '';
-          // ★ 到貨日期
+          // ★ 到貨日期（放單號前面）
           var arrDate = p.scanned_at || p.created_at;
-          var arrDateTag = arrDate ? ' <span style="font-size:10px;color:var(--text3)">' + new Date(arrDate).toLocaleDateString('zh-TW',{month:'numeric',day:'numeric'}) + '到</span>' : '';
-          // ★ 倉儲保管狀態
+          var arrDateStr = arrDate ? new Date(arrDate).toLocaleDateString('zh-TW',{month:'numeric',day:'numeric'}) : '';
+          var arrDateTag = arrDateStr ? '<span style="font-size:10px;color:var(--text3);margin-right:4px">' + arrDateStr + '</span>' : '';
+          // ★ 倉儲保管狀態（只顯示逾期的）
           var sInfo = calcStorageInfo(p.scanned_at || p.created_at);
-          var storageTag = ' <span class="storage-tag '+sInfo.cssClass+'">'+sInfo.label+'</span>';
+          var storageTag = sInfo.isOverdue ? ' <span class="storage-tag '+sInfo.cssClass+'">'+sInfo.label+'</span>' : '';
           if(sInfo.isOverdue) {
             totalOverdueKRW += sInfo.overdueFeeKRW;
             totalOverdueTWD += sInfo.overdueFeeTWD;
           }
-          html += '<div style="font-family:monospace;font-size:12px;padding:3px 0;color:var(--text)">📦 '+tnHtml+shelfTag+arrDateTag+storageTag+'</div>';
+          html += '<div style="font-family:monospace;font-size:12px;padding:3px 0;color:var(--text)">'+arrDateTag+'📦 '+tnHtml+shelfTag+storageTag+'</div>';
         });
         // 客人全部在庫包裹的貨架摘要（含出貨的）
         var _cs = ['delivered','picked','transit','shipping'];
@@ -3327,6 +3330,13 @@ async function renderShiplistFromDB() {
           + '<button id="broker-hh-'+t.id+'" onclick="selectBroker(\''+t.id+'\',\'鴻海\')" style="flex:1;padding:10px;border:2px solid var(--border);border-radius:8px;background:var(--bg2);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;color:var(--text2)">鴻海</button>'
           + '<input type="hidden" id="ship-tracking-'+t.id+'" value="">'
           + '</div>'
+          // ★ 配送單號（手動輸入或掃碼）
+          + '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'
+          + '<label style="font-size:12px;color:var(--text2);min-width:70px">配送單號</label>'
+          + '<input id="delivery-no-'+t.id+'" type="text" placeholder="輸入或掃碼" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:monospace;background:var(--bg)">'
+          + '<input id="delivery-scan-'+t.id+'" type="file" accept="image/*" capture="environment" style="display:none" onchange="scanDeliveryBarcode(\''+t.id+'\',this)">'
+          + '<button onclick="document.getElementById(\'delivery-scan-'+t.id+'\').click()" style="background:var(--accent);border:none;color:white;padding:8px 12px;border-radius:6px;font-size:14px;cursor:pointer;white-space:nowrap">📷</button>'
+          + '</div>'
           // ★ 運費（自動計算，雙幣顯示）
           + '<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">'
           + '<label style="font-size:12px;color:var(--text2);min-width:70px">運費</label>'
@@ -3366,6 +3376,8 @@ async function renderShiplistFromDB() {
         if(t.ship_weight) html += '<div style="font-size:12px;color:var(--text2)">計費重量：<strong>'+t.ship_weight+' kg</strong></div>';
         if(newBoxMatch) html += '<div style="font-size:12px;color:var(--text2)">新箱：<strong>是</strong></div>';
         if(t.ship_logistic) html += '<div style="font-size:12px;color:var(--text2)">報關行：<strong>'+t.ship_logistic+'</strong></div>';
+        var deliveryMatch = tn.match(/配送單號:([^|]+)/);
+        if(deliveryMatch) html += '<div style="font-size:12px;color:var(--text2)">配送單號：<strong style="font-family:monospace">'+deliveryMatch[1]+'</strong></div>';
         if(t.ship_cost) {
           var twdAmt = twdMatch ? 'NT$'+Number(twdMatch[1]).toLocaleString() : '';
           // ★ 解析逾期費
@@ -3623,6 +3635,27 @@ function selectBroker(taskId, broker) {
   if(hiddenInput) hiddenInput.value = broker;
 }
 
+// ★ 配送單號掃碼（用相機拍條碼圖片後自動辨識）
+function scanDeliveryBarcode(taskId, input) {
+  if(!input.files || !input.files.length) return;
+  var file = input.files[0];
+  var inputEl = document.getElementById('delivery-no-'+taskId);
+  try {
+    var scanner = new Html5Qrcode('__temp-scan-'+Date.now(), false);
+    scanner.scanFileV2(file, false).then(function(result) {
+      if(inputEl) inputEl.value = result.decodedText;
+      showToast('✅ 掃碼成功：' + result.decodedText, 'green');
+      scanner.clear();
+    }).catch(function() {
+      showToast('無法辨識條碼，請手動輸入', 'red');
+    });
+  } catch(e) {
+    // fallback: 提示手動輸入
+    showToast('條碼辨識失敗，請手動輸入', 'red');
+  }
+  input.value = '';
+}
+
 // ── 包裝完成確認（含箱子、計費重量、雙幣運費、照片）──
 async function confirmShipPacking(taskId) {
   try {
@@ -3722,9 +3755,12 @@ async function confirmShipPacking(taskId) {
       }
     }
 
-    // ★ 組合備註資訊（含箱子、計費重量、TWD、新箱、逾期費）
+    // ★ 組合備註資訊（含箱子、計費重量、TWD、新箱、逾期費、配送單號）
+    var deliveryNoEl = document.getElementById('delivery-no-'+taskId);
+    var deliveryNo = deliveryNoEl ? deliveryNoEl.value.trim() : '';
     var shipNotes = '箱子:' + boxName + '|計費:' + billingWeight + 'kg|方式:' + methodLabel + '|TWD:' + shipCostTWD;
     if(isNewBox) shipNotes += '|新箱:是';
+    if(deliveryNo) shipNotes += '|配送單號:' + deliveryNo;
     if(overdueKRW > 0) shipNotes += '|逾期費:' + overdueKRW + '|逾期TWD:' + overdueTWD;
 
     // 更新 task 狀態 + 儲存包裝資訊
@@ -3772,6 +3808,7 @@ async function confirmShipPacking(taskId) {
           + '<div style="font-size:12px;color:var(--text2)">計費重量：<strong>'+billingWeight+' kg</strong></div>'
           + (isNewBox ? '<div style="font-size:12px;color:var(--text2)">新箱：<strong>是</strong></div>' : '')
           + '<div style="font-size:12px;color:var(--text2)">報關行：<strong>'+shipTracking+'</strong></div>'
+          + (deliveryNo ? '<div style="font-size:12px;color:var(--text2)">配送單號：<strong style="font-family:monospace">'+deliveryNo+'</strong></div>' : '')
           + '<div style="font-size:13px;color:var(--accent);font-weight:700;margin-top:4px">運費：₩'+shipCostKRW.toLocaleString()+'（NT$'+shipCostTWD.toLocaleString()+'）</div>';
       });
     }
