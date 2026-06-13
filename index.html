@@ -3252,7 +3252,7 @@ async function renderShiplistFromDB() {
           // ★ 到貨日期（放單號前面）
           var arrDate = p.scanned_at || p.created_at;
           var arrDateStr = arrDate ? new Date(arrDate).toLocaleDateString('zh-TW',{month:'numeric',day:'numeric'}) : '';
-          var arrDateTag = arrDateStr ? '<span style="font-size:10px;color:var(--text3);margin-right:4px">' + arrDateStr + '</span>' : '';
+          var arrDateTag = arrDateStr ? '<span style="font-size:12px;font-weight:700;color:var(--accent);margin-right:6px">' + arrDateStr + '</span>' : '';
           // ★ 倉儲保管狀態（只顯示逾期的）
           var sInfo = calcStorageInfo(p.scanned_at || p.created_at);
           var storageTag = sInfo.isOverdue ? ' <span class="storage-tag '+sInfo.cssClass+'">'+sInfo.label+'</span>' : '';
@@ -3262,9 +3262,9 @@ async function renderShiplistFromDB() {
           }
           html += '<div style="font-family:monospace;font-size:12px;padding:3px 0;color:var(--text)">'+arrDateTag+'📦 '+tnHtml+shelfTag+storageTag+'</div>';
         });
-        // 客人全部在庫包裹的貨架摘要（含出貨的）
+        // 客人全部在庫包裹的貨架摘要（★ 含本次出貨包裹，避免漏算）
         var _cs = ['delivered','picked','transit','shipping'];
-        var allInStock = allPkgs.filter(function(p){ return !_cs.includes(p.status); });
+        var allInStock = allPkgs.filter(function(p){ return !_cs.includes(p.status) || shipTrackNos.includes(p.tracking_no); });
         // ★ 收集出貨包裹的貨架位置
         var shipShelfSet = {};
         shipPkgs.forEach(function(p){ if(p.shelf) shipShelfSet[p.shelf] = true; });
@@ -3334,8 +3334,7 @@ async function renderShiplistFromDB() {
           + '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'
           + '<label style="font-size:12px;color:var(--text2);min-width:70px">配送單號</label>'
           + '<input id="delivery-no-'+t.id+'" type="text" placeholder="輸入或掃碼" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:monospace;background:var(--bg)">'
-          + '<input id="delivery-scan-'+t.id+'" type="file" accept="image/*" capture="environment" style="display:none" onchange="scanDeliveryBarcode(\''+t.id+'\',this)">'
-          + '<button onclick="document.getElementById(\'delivery-scan-'+t.id+'\').click()" style="background:var(--accent);border:none;color:white;padding:8px 12px;border-radius:6px;font-size:14px;cursor:pointer;white-space:nowrap">📷</button>'
+          + '<button onclick="openDeliveryScanner(\''+t.id+'\')" style="background:var(--accent);border:none;color:white;padding:8px 12px;border-radius:6px;font-size:14px;cursor:pointer;white-space:nowrap">📷</button>'
           + '</div>'
           // ★ 運費（自動計算，雙幣顯示）
           + '<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">'
@@ -3635,25 +3634,52 @@ function selectBroker(taskId, broker) {
   if(hiddenInput) hiddenInput.value = broker;
 }
 
-// ★ 配送單號掃碼（用相機拍條碼圖片後自動辨識）
-function scanDeliveryBarcode(taskId, input) {
-  if(!input.files || !input.files.length) return;
-  var file = input.files[0];
-  var inputEl = document.getElementById('delivery-no-'+taskId);
-  try {
-    var scanner = new Html5Qrcode('__temp-scan-'+Date.now(), false);
-    scanner.scanFileV2(file, false).then(function(result) {
-      if(inputEl) inputEl.value = result.decodedText;
-      showToast('✅ 掃碼成功：' + result.decodedText, 'green');
-      scanner.clear();
-    }).catch(function() {
-      showToast('無法辨識條碼，請手動輸入', 'red');
-    });
-  } catch(e) {
-    // fallback: 提示手動輸入
-    showToast('條碼辨識失敗，請手動輸入', 'red');
+// ★ 配送單號即時條碼掃描（與入庫掃碼相同的 Html5Qrcode）
+var deliveryTargetTaskId = '';
+var deliveryScanner = null;
+
+function openDeliveryScanner(taskId) {
+  deliveryTargetTaskId = taskId;
+  var modal = document.getElementById('delivery-scanner-modal');
+  if(modal) modal.style.display = 'flex';
+  setTimeout(function() {
+    try {
+      deliveryScanner = new Html5Qrcode('delivery-qr-reader');
+      var screenW = window.innerWidth || 360;
+      var boxW = Math.min(Math.floor(screenW * 0.7), 300);
+      var boxH = Math.floor(boxW * 0.4);
+      deliveryScanner.start(
+        { facingMode: 'environment' },
+        { fps: 15, qrbox: { width: boxW, height: boxH } },
+        function(decoded) {
+          // 掃到條碼 → 填入配送單號
+          var inputEl = document.getElementById('delivery-no-' + deliveryTargetTaskId);
+          if(inputEl) inputEl.value = decoded.trim();
+          showToast('✅ 掃碼成功：' + decoded.trim(), 'green');
+          closeDeliveryScanner();
+        },
+        function() {}
+      ).catch(function(err) {
+        console.error('配送掃碼相機錯誤:', err);
+        showToast('無法開啟相機', 'red');
+        closeDeliveryScanner();
+      });
+    } catch(e) {
+      showToast('條碼掃描器初始化失敗', 'red');
+      closeDeliveryScanner();
+    }
+  }, 300);
+}
+
+function closeDeliveryScanner() {
+  if(deliveryScanner) {
+    deliveryScanner.stop().then(function() {
+      deliveryScanner.clear();
+      deliveryScanner = null;
+    }).catch(function() { deliveryScanner = null; });
   }
-  input.value = '';
+  var modal = document.getElementById('delivery-scanner-modal');
+  if(modal) modal.style.display = 'none';
 }
 
 // ── 包裝完成確認（含箱子、計費重量、雙幣運費、照片）──
@@ -4535,5 +4561,17 @@ setTimeout(function() {
 }, 15000);
 
 </script>
+<!-- ★ 配送單號條碼掃描器 -->
+<div id="delivery-scanner-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.9);flex-direction:column;align-items:center;justify-content:center">
+  <div style="width:100%;max-width:400px;padding:20px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <span style="font-size:16px;font-weight:700;color:white">📷 掃描配送單號條碼</span>
+      <button onclick="closeDeliveryScanner()" style="background:rgba(255,255,255,0.2);border:none;color:white;font-size:20px;width:36px;height:36px;border-radius:50%;cursor:pointer">✕</button>
+    </div>
+    <div id="delivery-qr-reader" style="width:100%;border-radius:12px;overflow:hidden"></div>
+    <div style="margin-top:12px;text-align:center;color:rgba(255,255,255,0.6);font-size:12px">對準條碼自動辨識</div>
+  </div>
+</div>
+
 </body>
 </html>
