@@ -2249,7 +2249,7 @@ async function lookupBarcode(code) {
   }
 
   // ── 正常流程 ──
-  let pkg = packageDB[code];
+  var pkg = packageDB[code];
   if(!pkg) {
     pkg = {trackNo:code, memberCode:null, status:'unknown', weight:null, photos:[], note:''};
     packageDB[code] = pkg;
