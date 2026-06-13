@@ -650,6 +650,25 @@ input[type=file] { display:none; }
 </div>
 
 <!-- ══ DETAIL SCREEN ══ -->
+<!-- ★ 掃碼後拍照畫面 -->
+<div id="screen-photo-capture" class="screen">
+  <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;padding:24px">
+    <div style="font-size:15px;font-weight:700;color:var(--accent);margin-bottom:4px">✅ 掃碼成功</div>
+    <div id="capture-track-no" style="font-family:monospace;font-size:20px;font-weight:800;color:var(--text);margin-bottom:24px;word-break:break-all;text-align:center">—</div>
+    <div id="capture-preview" style="display:none;margin-bottom:16px;width:100%;max-width:320px">
+      <img id="capture-preview-img" style="width:100%;border-radius:12px;border:2px solid var(--accent)">
+      <div style="text-align:center;margin-top:8px;font-size:12px;color:var(--green);font-weight:600">✅ 照片已拍攝</div>
+    </div>
+    <button onclick="document.getElementById('capture-photo-input').click()" style="width:100%;max-width:300px;padding:20px;font-size:18px;font-weight:700;background:var(--accent);color:white;border:none;border-radius:14px;cursor:pointer;margin-bottom:12px;font-family:inherit">
+      📸 拍攝包裹照片
+    </button>
+    <input type="file" id="capture-photo-input" accept="image/*" capture="environment" style="display:none" onchange="handleCapturePhoto(this)">
+    <button onclick="skipCapture()" style="background:none;border:none;color:var(--text3);font-size:13px;cursor:pointer;padding:8px 16px;font-family:inherit;text-decoration:underline">
+      跳過拍照，直接入庫 →
+    </button>
+  </div>
+</div>
+
 <div id="screen-detail" class="screen">
   <div class="topbar">
     <button onclick="showScreen('screen-home')" style="background:rgba(255,255,255,0.15);border:none;color:white;padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer">← 主選單</button>
@@ -1726,6 +1745,35 @@ let currentPkg = null;
 let todayCount = 0;
 let recentScans = JSON.parse(sessionStorage.getItem('recentScans')||'[]');
 let uploadedPhotos = [];
+let pendingBarcode = '';
+
+// ★ 掃碼後拍照：處理拍攝的照片
+function handleCapturePhoto(input) {
+  if(!input.files || !input.files.length) return;
+  var file = input.files[0];
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    uploadedPhotos = [e.target.result];
+    // 顯示預覽
+    var preview = document.getElementById('capture-preview');
+    var img = document.getElementById('capture-preview-img');
+    if(img) img.src = e.target.result;
+    if(preview) preview.style.display = 'block';
+    // 拍完照後自動進入入庫詳情
+    setTimeout(async function() {
+      await lookupBarcode(pendingBarcode);
+      renderPhotoGrid();
+    }, 600);
+  };
+  reader.readAsDataURL(file);
+  input.value = '';
+}
+
+// ★ 跳過拍照直接進入入庫
+async function skipCapture() {
+  uploadedPhotos = [];
+  await lookupBarcode(pendingBarcode);
+}
 let btDevice = null;
 let btConnected = false;
 let batchMode = false;
@@ -1977,14 +2025,12 @@ function startCamera() {
     { fps: 15, qrbox: { width: boxW, height: boxH } },
     async function onScanSuccess(decodedText, decodedResult) {
       console.log('✅ decoded:', decodedText);
-      captureFrameAsPhoto();
-      var autoPhotos = uploadedPhotos.slice();
       stopCamera();
-      await lookupBarcode(decodedText);
-      if(autoPhotos.length > 0) {
-        uploadedPhotos = autoPhotos;
-        renderPhotoGrid();
-      }
+      // ★ 保存掃碼結果，跳到拍照畫面
+      pendingBarcode = decodedText.trim().toUpperCase();
+      document.getElementById('capture-track-no').textContent = pendingBarcode;
+      document.getElementById('capture-preview').style.display = 'none';
+      showScreen('screen-photo-capture');
     },
     function onScanFailure() {}
   ).catch(function(err) {
@@ -2215,7 +2261,7 @@ async function lookupBarcode(code) {
           // 批量模式：Toast 警告後自動跳下一件
           if(batchMode) {
             showToast('⛔ ' + code + ' 已入庫！' + dupMember + ' · 貨架 ' + (dbPkg.shelf||'—') + '　跳過...', 'red');
-            setTimeout(function(){ startCamera(); }, 1500);
+            setTimeout(function(){ showScreen('screen-scan'); }, 1500);
             return;
           }
 
@@ -2256,7 +2302,8 @@ async function lookupBarcode(code) {
   }
 
   currentPkg = pkg;
-  uploadedPhotos = [];
+  // ★ 如果已從拍照畫面帶入照片，不清除；否則重設
+  if(uploadedPhotos.length === 0) uploadedPhotos = [];
   renderDetailScreen(pkg);
   showScreen('screen-detail');
   // 恢復送出按鈕
@@ -3677,7 +3724,7 @@ async function confirmShipPacking(taskId) {
       ship_logistic: shipTracking,
       ship_cost: shipCostKRW,
       ship_photo: shipPhotoUrl,
-      notes: (task.notes ? task.notes + '\n' : '') + shipNotes
+      details: (task.details ? task.details + '\n' : '') + shipNotes
     }).eq('id', taskId);
 
     if(updateErr) { showToast('❌ 更新失敗：'+updateErr.message,'red'); return; }
