@@ -1836,6 +1836,14 @@ document.addEventListener('DOMContentLoaded', function(){
 // 1) Supabase Realtime：包裹或任務有任何變動 → 立即刷新統計
 function setupRealtimeSync() {
   if(!sb || !sb.channel) { console.warn('⏭️ Realtime 不可用，僅用輪詢'); return; }
+  // ★ 檢查 WebSocket 是否可用（HTTP 環境下會失敗）
+  try {
+    var ws = new WebSocket('wss://echo.websocket.org');
+    ws.close();
+  } catch(e) {
+    console.warn('⏭️ WebSocket 不可用（可能是非 HTTPS 環境），僅用輪詢');
+    return;
+  }
   try {
     sb.channel('staff-live-stats')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'packages' }, function(payload) {
@@ -1847,9 +1855,10 @@ function setupRealtimeSync() {
         refreshAllStats();
       })
       .subscribe(function(status) {
+        if(status === 'CHANNEL_ERROR') { console.warn('📡 Realtime 連線失敗，使用輪詢模式'); return; }
         console.log('📡 Realtime 狀態:', status);
       });
-  } catch(e) { console.error('Realtime setup error:', e); }
+  } catch(e) { console.warn('⏭️ Realtime setup 跳過:', e.message || e); }
 }
 
 // 統一刷新所有統計（防抖：500ms 內多次觸發只執行一次）
@@ -3212,6 +3221,7 @@ async function renderShiplistFromDB() {
           .replace(/(特殊需求[：:]\s*.+)/g, '<span style="color:#dc3c3c;font-weight:700;font-size:13px">⚠️ $1</span>')
           .replace(/(裝箱[：:]\s*.+)/g, '<span style="color:#e67e22;font-weight:700">📦 $1</span>')
           .replace(/(付款[：:]\s*.+)/g, '<span style="display:none">$1</span>')
+          .replace(/(出貨單號[：:]\s*.+)/g, '<span style="display:none">$1</span>')
           .replace(/(包裹數[：:]\s*.+)/g, '<span style="color:#8e44ad;font-weight:700;font-size:13px">📮 出貨$1</span>')
           .replace(/(逾期倉儲費[：:]\s*.+)/g, '<span style="color:#c0392b;font-weight:800;font-size:14px;background:rgba(220,60,60,0.08);padding:2px 8px;border-radius:4px">⚠️ $1</span>');
         html += '<div style="font-size:12px;color:var(--text2);background:var(--bg);border-radius:6px;padding:10px;line-height:1.9;white-space:pre-line;margin-bottom:8px">'+styledDetails+'</div>';
@@ -3237,6 +3247,9 @@ async function renderShiplistFromDB() {
             ? tn.slice(0,-4) + '<span style="color:#dc3c3c;font-weight:800">' + tn.slice(-4) + '</span>'
             : '<span style="color:#dc3c3c;font-weight:800">' + tn + '</span>';
           var shelfTag = p.shelf ? ' <span style="background:rgba(27,79,138,0.1);color:var(--accent);font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px">📍'+p.shelf+'</span>' : '';
+          // ★ 到貨日期
+          var arrDate = p.scanned_at || p.created_at;
+          var arrDateTag = arrDate ? ' <span style="font-size:10px;color:var(--text3)">' + new Date(arrDate).toLocaleDateString('zh-TW',{month:'numeric',day:'numeric'}) + '到</span>' : '';
           // ★ 倉儲保管狀態
           var sInfo = calcStorageInfo(p.scanned_at || p.created_at);
           var storageTag = ' <span class="storage-tag '+sInfo.cssClass+'">'+sInfo.label+'</span>';
@@ -3244,7 +3257,7 @@ async function renderShiplistFromDB() {
             totalOverdueKRW += sInfo.overdueFeeKRW;
             totalOverdueTWD += sInfo.overdueFeeTWD;
           }
-          html += '<div style="font-family:monospace;font-size:12px;padding:3px 0;color:var(--text)">📦 '+tnHtml+shelfTag+storageTag+'</div>';
+          html += '<div style="font-family:monospace;font-size:12px;padding:3px 0;color:var(--text)">📦 '+tnHtml+shelfTag+arrDateTag+storageTag+'</div>';
         });
         // 客人全部在庫包裹的貨架摘要（含出貨的）
         var _cs = ['delivered','picked','transit','shipping'];
