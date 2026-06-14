@@ -78,6 +78,8 @@ html, body { height:100%; background:var(--bg); font-family:'Noto Sans TC',syste
 }
 #html5-qrcode-reader { max-height:240px; }
 #html5-qrcode-reader video { max-height:240px; object-fit:cover; }
+#delivery-qr-reader { max-height:280px; }
+#delivery-qr-reader video { max-height:280px; object-fit:cover; }
 .scan-corners {
   position:absolute; inset:0; pointer-events:none;
 }
@@ -3634,25 +3636,42 @@ function selectBroker(taskId, broker) {
   if(hiddenInput) hiddenInput.value = broker;
 }
 
-// ★ 配送單號即時條碼掃描（與入庫掃碼相同的 Html5Qrcode）
+// ★ 配送單號即時條碼掃描（與入庫掃碼完全相同的設定）
 var deliveryTargetTaskId = '';
 var deliveryScanner = null;
 
 function openDeliveryScanner(taskId) {
   deliveryTargetTaskId = taskId;
+  // ★ 確保入庫掃碼已停止（避免相機衝突）
+  if(html5QrScanner) {
+    try { html5QrScanner.stop().then(function(){ html5QrScanner.clear(); html5QrScanner = null; }).catch(function(){}); } catch(e){}
+  }
   var modal = document.getElementById('delivery-scanner-modal');
   if(modal) modal.style.display = 'flex';
   setTimeout(function() {
     try {
-      deliveryScanner = new Html5Qrcode('delivery-qr-reader');
+      // ★ 與入庫掃碼完全相同的初始化設定
+      deliveryScanner = new Html5Qrcode('delivery-qr-reader', { verbose: false });
       var screenW = window.innerWidth || 360;
       var boxW = Math.min(Math.floor(screenW * 0.7), 300);
-      var boxH = Math.floor(boxW * 0.4);
+      var boxH = Math.floor(boxW * 0.5);
       deliveryScanner.start(
         { facingMode: 'environment' },
-        { fps: 15, qrbox: { width: boxW, height: boxH } },
+        { fps: 15, qrbox: { width: boxW, height: boxH },
+          formatsToSupport: [
+            0,  // QR_CODE
+            4,  // CODE_128
+            2,  // CODE_39
+            3,  // CODE_93
+            10, // EAN_13
+            9,  // EAN_8
+            12, // UPC_A
+            11, // UPC_E
+            6,  // ITF
+            1   // CODABAR
+          ]
+        },
         function(decoded) {
-          // 掃到條碼 → 填入配送單號
           var inputEl = document.getElementById('delivery-no-' + deliveryTargetTaskId);
           if(inputEl) inputEl.value = decoded.trim();
           showToast('✅ 掃碼成功：' + decoded.trim(), 'green');
@@ -3661,22 +3680,24 @@ function openDeliveryScanner(taskId) {
         function() {}
       ).catch(function(err) {
         console.error('配送掃碼相機錯誤:', err);
-        showToast('無法開啟相機', 'red');
+        showToast('無法開啟相機：' + (err.message||err), 'red');
         closeDeliveryScanner();
       });
     } catch(e) {
       showToast('條碼掃描器初始化失敗', 'red');
       closeDeliveryScanner();
     }
-  }, 300);
+  }, 500);
 }
 
 function closeDeliveryScanner() {
   if(deliveryScanner) {
-    deliveryScanner.stop().then(function() {
-      deliveryScanner.clear();
-      deliveryScanner = null;
-    }).catch(function() { deliveryScanner = null; });
+    try {
+      deliveryScanner.stop().then(function() {
+        deliveryScanner.clear();
+        deliveryScanner = null;
+      }).catch(function() { deliveryScanner = null; });
+    } catch(e) { deliveryScanner = null; }
   }
   var modal = document.getElementById('delivery-scanner-modal');
   if(modal) modal.style.display = 'none';
