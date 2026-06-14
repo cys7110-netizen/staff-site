@@ -2034,7 +2034,7 @@ function startCamera() {
   html5QrScanner.start(
     { facingMode: 'environment' },
     { fps: 15, qrbox: { width: boxW, height: boxH } },
-    async function onScanSuccess(decodedText, decodedResult) {
+    function onScanSuccess(decodedText, decodedResult) {
       console.log('✅ decoded:', decodedText);
       stopCamera();
       // ★ 保存掃碼結果，跳到拍照畫面
@@ -3651,26 +3651,16 @@ function openDeliveryScanner(taskId) {
   setTimeout(function() {
     try {
       // ★ 與入庫掃碼完全相同的初始化設定
-      deliveryScanner = new Html5Qrcode('delivery-qr-reader', { verbose: false });
+      deliveryScanner = new Html5Qrcode('delivery-qr-reader', {
+        verbose: false,
+        useBarCodeDetectorIfSupported: true
+      });
       var screenW = window.innerWidth || 360;
       var boxW = Math.min(Math.floor(screenW * 0.7), 300);
       var boxH = Math.floor(boxW * 0.5);
       deliveryScanner.start(
         { facingMode: 'environment' },
-        { fps: 15, qrbox: { width: boxW, height: boxH },
-          formatsToSupport: [
-            0,  // QR_CODE
-            4,  // CODE_128
-            2,  // CODE_39
-            3,  // CODE_93
-            10, // EAN_13
-            9,  // EAN_8
-            12, // UPC_A
-            11, // UPC_E
-            6,  // ITF
-            1   // CODABAR
-          ]
-        },
+        { fps: 15, qrbox: { width: boxW, height: boxH } },
         function(decoded) {
           var inputEl = document.getElementById('delivery-no-' + deliveryTargetTaskId);
           if(inputEl) inputEl.value = decoded.trim();
