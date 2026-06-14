@@ -1713,7 +1713,7 @@ function addUnclaimedManual() {
 var origShowScreen = showScreen;
 function showScreen(id) {
   // 離開掃碼頁面時自動停止相機
-  if(id !== 'screen-scan' && id !== 'screen-detail' && id !== 'screen-success') {
+  if(id !== 'screen-scan' && id !== 'screen-detail' && id !== 'screen-success' && id !== 'screen-photo-capture') {
     stopCamera();
   }
   document.querySelectorAll('.screen').forEach(function(s){ s.classList.remove('active'); });
@@ -2031,17 +2031,25 @@ function startCamera() {
   var boxW = Math.min(Math.floor(screenW * 0.8), 350);
   var boxH = Math.floor(boxW * 0.5);
 
+  var _scanLock = false;
   html5QrScanner.start(
     { facingMode: 'environment' },
     { fps: 15, qrbox: { width: boxW, height: boxH } },
     function onScanSuccess(decodedText, decodedResult) {
+      if(_scanLock) return;
+      _scanLock = true;
       console.log('✅ decoded:', decodedText);
       stopCamera();
-      // ★ 保存掃碼結果，跳到拍照畫面
-      pendingBarcode = decodedText.trim().toUpperCase();
-      document.getElementById('capture-track-no').textContent = pendingBarcode;
-      document.getElementById('capture-preview').style.display = 'none';
-      showScreen('screen-photo-capture');
+      // ★ 延遲跳轉（部分手機在相機callback內無法立即操作DOM）
+      setTimeout(function() {
+        pendingBarcode = decodedText.trim().toUpperCase();
+        var trackEl = document.getElementById('capture-track-no');
+        var previewEl = document.getElementById('capture-preview');
+        if(trackEl) trackEl.textContent = pendingBarcode;
+        if(previewEl) previewEl.style.display = 'none';
+        showScreen('screen-photo-capture');
+        _scanLock = false;
+      }, 200);
     },
     function onScanFailure() {}
   ).catch(function(err) {
