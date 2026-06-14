@@ -3821,10 +3821,10 @@ async function confirmShipPacking(taskId) {
     if(shipMatch) {
       var trackNos = shipMatch[1].split(/[,，、\s]+/).filter(Boolean);
       for(var i=0; i<trackNos.length; i++) {
-        await sb.from('packages').update({status:'shipping', logistic_no: shipTracking, shipped_at: new Date().toISOString()}).eq('tracking_no',trackNos[i].trim());
+        await sb.from('packages').update({status:'delivered', logistic_no: shipTracking, shipped_at: new Date().toISOString()}).eq('tracking_no',trackNos[i].trim());
       }
     } else if(task.member_code) {
-      await sb.from('packages').update({status:'shipping', logistic_no: shipTracking, shipped_at: new Date().toISOString()}).eq('member_code', task.member_code).eq('status','arrived');
+      await sb.from('packages').update({status:'delivered', logistic_no: shipTracking, shipped_at: new Date().toISOString()}).eq('member_code', task.member_code).eq('status','arrived');
     }
 
     showToast('✅ 包裝完成（'+currentStaffName+'）','green');
