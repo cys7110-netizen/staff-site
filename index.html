@@ -78,6 +78,8 @@ html, body { height:100%; background:var(--bg); font-family:'Noto Sans TC',syste
 }
 #html5-qrcode-reader { max-height:240px; }
 #html5-qrcode-reader video { max-height:240px; object-fit:cover; }
+#delivery-scan-reader { max-height:280px; }
+#delivery-scan-reader video { max-height:280px; object-fit:cover; }
 .scan-corners {
   position:absolute; inset:0; pointer-events:none;
 }
@@ -922,6 +924,24 @@ input[type=file] { display:none; }
   </div>
 </div>
 
+<!-- ══ 配送單號掃碼專用頁 ══ -->
+<div id="screen-delivery-scan" class="screen">
+  <div class="topbar">
+    <button onclick="stopDeliveryScan();showScreen('screen-shiplist')" style="background:rgba(255,255,255,0.15);border:none;color:white;padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer">← 返回</button>
+    <div style="text-align:right">
+      <div class="topbar-title">📷 掃描配送單號</div>
+    </div>
+  </div>
+  <div style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;align-items:center;gap:14px">
+    <div id="delivery-scan-reader" style="width:100%;max-width:400px;border-radius:12px;overflow:hidden"></div>
+    <div style="font-size:13px;color:var(--text3);text-align:center">對準配送單條碼自動辨識</div>
+    <div style="display:flex;gap:8px;width:100%;max-width:400px">
+      <input id="delivery-manual-input" placeholder="或手動輸入配送單號" style="flex:1;padding:12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:monospace;background:var(--bg);color:var(--text);outline:none;min-width:0">
+      <button onclick="submitManualDelivery()" style="background:var(--accent);border:none;color:white;padding:12px 18px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap">確定</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ 包裹詳情 / 編輯 彈窗 ══ -->
 <div id="pkg-detail-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;overflow-y:auto;padding:20px;box-sizing:border-box">
   <div style="max-width:500px;margin:20px auto;background:var(--card);border-radius:14px;box-shadow:0 4px 30px rgba(0,0,0,0.3);overflow:hidden">
@@ -1711,7 +1731,7 @@ function addUnclaimedManual() {
 var origShowScreen = showScreen;
 function showScreen(id) {
   // 離開掃碼頁面時自動停止相機
-  if(id !== 'screen-scan' && id !== 'screen-detail' && id !== 'screen-success' && id !== 'screen-photo-capture') {
+  if(id !== 'screen-scan' && id !== 'screen-detail' && id !== 'screen-success' && id !== 'screen-photo-capture' && id !== 'screen-delivery-scan') {
     stopCamera();
   }
   document.querySelectorAll('.screen').forEach(function(s){ s.classList.remove('active'); });
@@ -3387,12 +3407,11 @@ async function renderShiplistFromDB() {
           + '<button id="broker-hh-'+t.id+'" onclick="selectBroker(\''+t.id+'\',\'鴻海\')" style="flex:1;padding:10px;border:2px solid var(--border);border-radius:8px;background:var(--bg2);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;color:var(--text2)">鴻海</button>'
           + '<input type="hidden" id="ship-tracking-'+t.id+'" value="">'
           + '</div>'
-          // ★ 配送單號（手動輸入或拍照辨識）
+          // ★ 配送單號（手動輸入或掃碼）
           + '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'
           + '<label style="font-size:12px;color:var(--text2);min-width:70px">配送單號</label>'
-          + '<input id="delivery-no-'+t.id+'" type="text" placeholder="輸入或拍照辨識" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:monospace;background:var(--bg)">'
-          + '<input id="delivery-cam-'+t.id+'" type="file" accept="image/*" capture="environment" style="display:none" onchange="readDeliveryBarcode(\''+t.id+'\',this)">'
-          + '<button onclick="document.getElementById(\'delivery-cam-'+t.id+'\').click()" style="background:var(--accent);border:none;color:white;padding:8px 12px;border-radius:6px;font-size:14px;cursor:pointer;white-space:nowrap">📷</button>'
+          + '<input id="delivery-no-'+t.id+'" type="text" placeholder="輸入或掃碼" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:monospace;background:var(--bg)">'
+          + '<button onclick="openDeliveryScanScreen(\''+t.id+'\')" style="background:var(--accent);border:none;color:white;padding:8px 12px;border-radius:6px;font-size:14px;cursor:pointer;white-space:nowrap">📷</button>'
           + '</div>'
           // ★ 運費（自動計算，雙幣顯示）
           + '<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">'
@@ -3692,52 +3711,79 @@ function selectBroker(taskId, broker) {
   if(hiddenInput) hiddenInput.value = broker;
 }
 
-// ★ 配送單號：拍照後自動辨識條碼
-async function readDeliveryBarcode(taskId, fileInput) {
-  if(!fileInput.files || !fileInput.files.length) return;
-  var file = fileInput.files[0];
-  var inputEl = document.getElementById('delivery-no-' + taskId);
+// ★ 配送單號：專用掃碼頁面（跟入庫掃碼完全相同方式）
+var deliveryTargetTaskId = '';
+var deliveryScannerInstance = null;
 
-  // 方法1: 用瀏覽器原生 BarcodeDetector（iOS Safari 16.4+ / Chrome 83+）
-  if(typeof BarcodeDetector !== 'undefined') {
-    try {
-      var img = new Image();
-      img.src = URL.createObjectURL(file);
-      await new Promise(function(r){ img.onload = r; });
-      var detector = new BarcodeDetector({formats:['code_128','code_39','ean_13','ean_8','upc_a','qr_code','itf','codabar']});
-      var results = await detector.detect(img);
-      URL.revokeObjectURL(img.src);
-      if(results && results.length > 0) {
-        if(inputEl) inputEl.value = results[0].rawValue.trim();
-        showToast('✅ 辨識成功：' + results[0].rawValue.trim(), 'green');
-        fileInput.value = '';
-        return;
-      }
-    } catch(e) { console.log('BarcodeDetector failed:', e); }
+function openDeliveryScanScreen(taskId) {
+  deliveryTargetTaskId = taskId;
+  // 確保入庫掃碼已停止
+  if(html5QrScanner) {
+    html5QrScanner.stop().then(function(){ html5QrScanner.clear(); html5QrScanner = null; }).catch(function(){ html5QrScanner = null; });
   }
+  showScreen('screen-delivery-scan');
+  document.getElementById('delivery-manual-input').value = '';
+  // 延遲啟動掃碼（等頁面切換完成）
+  setTimeout(startDeliveryScan, 600);
+}
 
-  // 方法2: 用 Html5Qrcode scanFile
-  try {
-    var tempId = 'temp-scan-' + Date.now();
-    var tempDiv = document.createElement('div');
-    tempDiv.id = tempId;
-    tempDiv.style.display = 'none';
-    document.body.appendChild(tempDiv);
-    var scanner = new Html5Qrcode(tempId, {verbose:false});
-    var result = await scanner.scanFileV2(file, false);
-    scanner.clear();
-    tempDiv.remove();
-    if(result && result.decodedText) {
-      if(inputEl) inputEl.value = result.decodedText.trim();
-      showToast('✅ 辨識成功：' + result.decodedText.trim(), 'green');
-      fileInput.value = '';
-      return;
-    }
-  } catch(e) { console.log('Html5Qrcode scanFile failed:', e); }
+function startDeliveryScan() {
+  if(deliveryScannerInstance) return;
+  if(typeof Html5Qrcode === 'undefined') {
+    showToast('掃碼引擎載入失敗', 'red');
+    return;
+  }
+  deliveryScannerInstance = new Html5Qrcode('delivery-scan-reader', {
+    useBarCodeDetectorIfSupported: true,
+    verbose: false
+  });
+  var screenW = window.innerWidth || 360;
+  var boxW = Math.min(Math.floor(screenW * 0.8), 350);
+  var boxH = Math.floor(boxW * 0.5);
+  deliveryScannerInstance.start(
+    { facingMode: 'environment' },
+    { fps: 15, qrbox: { width: boxW, height: boxH } },
+    function(decodedText) {
+      // 掃到 → 停止 → 填入 → 返回
+      deliveryScannerInstance.stop().then(function(){
+        deliveryScannerInstance.clear();
+        deliveryScannerInstance = null;
+        fillDeliveryNo(decodedText.trim());
+      }).catch(function(){
+        deliveryScannerInstance = null;
+        fillDeliveryNo(decodedText.trim());
+      });
+    },
+    function() {}
+  ).catch(function(err) {
+    showToast('相機啟動失敗：' + (err.message||err), 'red');
+    deliveryScannerInstance = null;
+  });
+}
 
-  // 都失敗 → 提示手動輸入
-  showToast('無法自動辨識，請手動輸入配送單號', 'orange');
-  fileInput.value = '';
+function stopDeliveryScan() {
+  if(deliveryScannerInstance) {
+    deliveryScannerInstance.stop().then(function(){
+      deliveryScannerInstance.clear();
+      deliveryScannerInstance = null;
+    }).catch(function(){ deliveryScannerInstance = null; });
+  }
+}
+
+function fillDeliveryNo(value) {
+  var el = document.getElementById('delivery-no-' + deliveryTargetTaskId);
+  if(el) el.value = value;
+  showToast('✅ 配送單號：' + value, 'green');
+  showScreen('screen-shiplist');
+  // 重新載入出貨清單以保持狀態
+  if(typeof loadShipListDetail === 'function') loadShipListDetail();
+}
+
+function submitManualDelivery() {
+  var val = document.getElementById('delivery-manual-input').value.trim();
+  if(!val) { showToast('請輸入配送單號', 'red'); return; }
+  stopDeliveryScan();
+  fillDeliveryNo(val);
 }
 
 // ── 包裝完成確認（含箱子、計費重量、雙幣運費、照片）──
