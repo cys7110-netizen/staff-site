@@ -2718,7 +2718,7 @@ async function editRecentPkg(trackNo) {
       + '<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">會員代號</label>'
       + '<input id="edit-member" value="'+(pkg.member_code||'')+'" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;font-size:14px;box-sizing:border-box"></div>'
       + '<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">重量 (kg)</label>'
-      + '<input id="edit-weight" type="number" step="0.1" value="'+(pkg.weight||'')+'" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;font-size:14px;box-sizing:border-box"></div>'
+      + '<input id="edit-weight" type="number" step="0.1" value="'+(pkg.weight_kg||'')+'" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;font-size:14px;box-sizing:border-box"></div>'
       + '<div style="margin-bottom:16px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">貨架位置</label>'
       + '<input id="edit-shelf" value="'+(pkg.shelf||'')+'" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;font-size:14px;box-sizing:border-box"></div>'
       + '<div style="display:flex;gap:8px">'
@@ -2736,7 +2736,7 @@ async function saveEditPkg(pkgId) {
   try {
     var { error } = await sb.from('packages').update({
       member_code: mc || null,
-      weight: wt,
+      weight_kg: wt,
       shelf: shelf || null
     }).eq('id', pkgId);
     if(error) { showToast('更新失敗：'+error.message, 'red'); return; }
