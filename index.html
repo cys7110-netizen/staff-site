@@ -2026,32 +2026,31 @@ function startCamera() {
     verbose: false
   });
 
-  // 自適應掃描框（螢幕 80%）
   var screenW = window.innerWidth || 360;
   var boxW = Math.min(Math.floor(screenW * 0.8), 350);
   var boxH = Math.floor(boxW * 0.5);
 
-  var _scanLock = false;
   html5QrScanner.start(
     { facingMode: 'environment' },
     { fps: 15, qrbox: { width: boxW, height: boxH } },
-    function onScanSuccess(decodedText, decodedResult) {
-      if(_scanLock) return;
-      _scanLock = true;
-      console.log('✅ decoded:', decodedText);
-      stopCamera();
-      // ★ 延遲跳轉（部分手機在相機callback內無法立即操作DOM）
-      setTimeout(function() {
+    function(decodedText) {
+      // ★ 掃到條碼 → 停止相機 → 跳轉
+      html5QrScanner.stop().then(function(){
+        html5QrScanner.clear();
+        html5QrScanner = null;
         pendingBarcode = decodedText.trim().toUpperCase();
-        var trackEl = document.getElementById('capture-track-no');
-        var previewEl = document.getElementById('capture-preview');
-        if(trackEl) trackEl.textContent = pendingBarcode;
-        if(previewEl) previewEl.style.display = 'none';
+        document.getElementById('capture-track-no').textContent = pendingBarcode;
+        document.getElementById('capture-preview').style.display = 'none';
         showScreen('screen-photo-capture');
-        _scanLock = false;
-      }, 200);
+      }).catch(function(){
+        html5QrScanner = null;
+        pendingBarcode = decodedText.trim().toUpperCase();
+        document.getElementById('capture-track-no').textContent = pendingBarcode;
+        document.getElementById('capture-preview').style.display = 'none';
+        showScreen('screen-photo-capture');
+      });
     },
-    function onScanFailure() {}
+    function() {}
   ).catch(function(err) {
     console.error('Camera error:', err);
     showToast('無法開啟相機：' + (err.message||err), 'red');
@@ -3650,18 +3649,16 @@ var deliveryScanner = null;
 
 function openDeliveryScanner(taskId) {
   deliveryTargetTaskId = taskId;
-  // ★ 確保入庫掃碼已停止（避免相機衝突）
   if(html5QrScanner) {
-    try { html5QrScanner.stop().then(function(){ html5QrScanner.clear(); html5QrScanner = null; }).catch(function(){}); } catch(e){}
+    try { html5QrScanner.stop().then(function(){ html5QrScanner.clear(); html5QrScanner=null; }).catch(function(){ html5QrScanner=null; }); } catch(e){}
   }
   var modal = document.getElementById('delivery-scanner-modal');
   if(modal) modal.style.display = 'flex';
   setTimeout(function() {
     try {
-      // ★ 與入庫掃碼完全相同的初始化設定
       deliveryScanner = new Html5Qrcode('delivery-qr-reader', {
-        verbose: false,
-        useBarCodeDetectorIfSupported: true
+        useBarCodeDetectorIfSupported: true,
+        verbose: false
       });
       var screenW = window.innerWidth || 360;
       var boxW = Math.min(Math.floor(screenW * 0.7), 300);
@@ -3670,19 +3667,29 @@ function openDeliveryScanner(taskId) {
         { facingMode: 'environment' },
         { fps: 15, qrbox: { width: boxW, height: boxH } },
         function(decoded) {
-          var inputEl = document.getElementById('delivery-no-' + deliveryTargetTaskId);
-          if(inputEl) inputEl.value = decoded.trim();
-          showToast('✅ 掃碼成功：' + decoded.trim(), 'green');
-          closeDeliveryScanner();
+          deliveryScanner.stop().then(function(){
+            deliveryScanner.clear(); deliveryScanner = null;
+            var el = document.getElementById('delivery-no-' + deliveryTargetTaskId);
+            if(el) el.value = decoded.trim();
+            showToast('✅ 掃碼成功：' + decoded.trim(), 'green');
+            var m = document.getElementById('delivery-scanner-modal');
+            if(m) m.style.display = 'none';
+          }).catch(function(){
+            deliveryScanner = null;
+            var el = document.getElementById('delivery-no-' + deliveryTargetTaskId);
+            if(el) el.value = decoded.trim();
+            showToast('✅ 掃碼成功：' + decoded.trim(), 'green');
+            var m = document.getElementById('delivery-scanner-modal');
+            if(m) m.style.display = 'none';
+          });
         },
         function() {}
       ).catch(function(err) {
-        console.error('配送掃碼相機錯誤:', err);
         showToast('無法開啟相機：' + (err.message||err), 'red');
         closeDeliveryScanner();
       });
     } catch(e) {
-      showToast('條碼掃描器初始化失敗', 'red');
+      showToast('掃描器初始化失敗', 'red');
       closeDeliveryScanner();
     }
   }, 500);
