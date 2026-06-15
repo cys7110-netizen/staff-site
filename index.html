@@ -78,8 +78,6 @@ html, body { height:100%; background:var(--bg); font-family:'Noto Sans TC',syste
 }
 #html5-qrcode-reader { max-height:240px; }
 #html5-qrcode-reader video { max-height:240px; object-fit:cover; }
-#delivery-qr-reader { max-height:280px; }
-#delivery-qr-reader video { max-height:280px; object-fit:cover; }
 .scan-corners {
   position:absolute; inset:0; pointer-events:none;
 }
@@ -344,7 +342,7 @@ html, body { height:100%; background:var(--bg); font-family:'Noto Sans TC',syste
   padding:12px 24px; border-radius:24px;
   font-size:13px; font-weight:500;
   opacity:0; transition:all 0.3s;
-  z-index:9999; white-space:nowrap;
+  z-index:9999; white-space:normal; max-width:92vw; text-align:center;
   pointer-events:none;
 }
 .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
@@ -2695,12 +2693,62 @@ function renderRecent() {
     return;
   }
   el.innerHTML = recentScans.map(function(s){
-    return '<div class="recent-item" onclick="lookupBarcode(\''+s.trackNo+'\')">'
+    return '<div class="recent-item" onclick="editRecentPkg(\''+s.trackNo+'\')" style="cursor:pointer">'
       + '<div><div class="recent-track">'+s.trackNo+'</div>'
       + '<div style="font-size:12px;color:var(--text3);margin-top:2px">'+(s.memberCode||'')+' · '+s.weight+' kg · '+s.time+'</div></div>'
       + '<span class="recent-status s-done">已入庫</span>'
+      + '<span style="font-size:10px;color:var(--accent);margin-left:4px">✏️</span>'
       + '</div>';
   }).join('');
+}
+
+// ── 修正已入庫包裹 ──
+async function editRecentPkg(trackNo) {
+  if(!sb) return;
+  try {
+    var { data: pkg } = await sb.from('packages').select('*').eq('tracking_no', trackNo).single();
+    if(!pkg) { showToast('找不到此包裹', 'red'); return; }
+
+    var modal = document.createElement('div');
+    modal.id = 'edit-pkg-modal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:999;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;padding:20px';
+    modal.innerHTML = '<div style="background:#fff;border-radius:12px;padding:24px;width:100%;max-width:400px">'
+      + '<h3 style="margin:0 0 16px;font-size:16px;color:var(--accent)">✏️ 修正包裹資訊</h3>'
+      + '<div style="font-family:monospace;font-size:14px;font-weight:700;margin-bottom:14px;color:var(--text)">'+trackNo+'</div>'
+      + '<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">會員代號</label>'
+      + '<input id="edit-member" value="'+(pkg.member_code||'')+'" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;font-size:14px;box-sizing:border-box"></div>'
+      + '<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">重量 (kg)</label>'
+      + '<input id="edit-weight" type="number" step="0.1" value="'+(pkg.weight||'')+'" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;font-size:14px;box-sizing:border-box"></div>'
+      + '<div style="margin-bottom:16px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">貨架位置</label>'
+      + '<input id="edit-shelf" value="'+(pkg.shelf||'')+'" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;font-size:14px;box-sizing:border-box"></div>'
+      + '<div style="display:flex;gap:8px">'
+      + '<button onclick="saveEditPkg(\''+pkg.id+'\')" style="flex:1;padding:12px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">💾 儲存修正</button>'
+      + '<button onclick="document.getElementById(\'edit-pkg-modal\').remove()" style="padding:12px 20px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:14px;cursor:pointer;font-family:inherit;color:var(--text2)">取消</button>'
+      + '</div></div>';
+    document.body.appendChild(modal);
+  } catch(e) { showToast('讀取失敗', 'red'); }
+}
+
+async function saveEditPkg(pkgId) {
+  var mc = document.getElementById('edit-member').value.trim();
+  var wt = parseFloat(document.getElementById('edit-weight').value) || 0;
+  var shelf = document.getElementById('edit-shelf').value.trim();
+  try {
+    var { error } = await sb.from('packages').update({
+      member_code: mc || null,
+      weight: wt,
+      shelf: shelf || null
+    }).eq('id', pkgId);
+    if(error) { showToast('更新失敗：'+error.message, 'red'); return; }
+    showToast('✅ 已修正', 'green');
+    document.getElementById('edit-pkg-modal').remove();
+    // 更新 recentScans
+    recentScans.forEach(function(s){
+      if(s.id === pkgId) { s.memberCode = mc; s.weight = wt; s.shelf = shelf; }
+    });
+    sessionStorage.setItem('recentScans', JSON.stringify(recentScans));
+    renderRecent();
+  } catch(e) { showToast('更新異常', 'red'); }
 }
 
 // ── 照片燈箱（Lightbox）：頁面內全螢幕檢視，支援左右切換 ──
@@ -3339,11 +3387,12 @@ async function renderShiplistFromDB() {
           + '<button id="broker-hh-'+t.id+'" onclick="selectBroker(\''+t.id+'\',\'鴻海\')" style="flex:1;padding:10px;border:2px solid var(--border);border-radius:8px;background:var(--bg2);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;color:var(--text2)">鴻海</button>'
           + '<input type="hidden" id="ship-tracking-'+t.id+'" value="">'
           + '</div>'
-          // ★ 配送單號（手動輸入或掃碼）
+          // ★ 配送單號（手動輸入或拍照辨識）
           + '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'
           + '<label style="font-size:12px;color:var(--text2);min-width:70px">配送單號</label>'
-          + '<input id="delivery-no-'+t.id+'" type="text" placeholder="輸入或掃碼" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:monospace;background:var(--bg)">'
-          + '<button onclick="openDeliveryScanner(\''+t.id+'\')" style="background:var(--accent);border:none;color:white;padding:8px 12px;border-radius:6px;font-size:14px;cursor:pointer;white-space:nowrap">📷</button>'
+          + '<input id="delivery-no-'+t.id+'" type="text" placeholder="輸入或拍照辨識" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:monospace;background:var(--bg)">'
+          + '<input id="delivery-cam-'+t.id+'" type="file" accept="image/*" capture="environment" style="display:none" onchange="readDeliveryBarcode(\''+t.id+'\',this)">'
+          + '<button onclick="document.getElementById(\'delivery-cam-'+t.id+'\').click()" style="background:var(--accent);border:none;color:white;padding:8px 12px;border-radius:6px;font-size:14px;cursor:pointer;white-space:nowrap">📷</button>'
           + '</div>'
           // ★ 運費（自動計算，雙幣顯示）
           + '<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">'
@@ -3643,69 +3692,52 @@ function selectBroker(taskId, broker) {
   if(hiddenInput) hiddenInput.value = broker;
 }
 
-// ★ 配送單號即時條碼掃描（與入庫掃碼完全相同的設定）
-var deliveryTargetTaskId = '';
-var deliveryScanner = null;
+// ★ 配送單號：拍照後自動辨識條碼
+async function readDeliveryBarcode(taskId, fileInput) {
+  if(!fileInput.files || !fileInput.files.length) return;
+  var file = fileInput.files[0];
+  var inputEl = document.getElementById('delivery-no-' + taskId);
 
-function openDeliveryScanner(taskId) {
-  deliveryTargetTaskId = taskId;
-  if(html5QrScanner) {
-    try { html5QrScanner.stop().then(function(){ html5QrScanner.clear(); html5QrScanner=null; }).catch(function(){ html5QrScanner=null; }); } catch(e){}
-  }
-  var modal = document.getElementById('delivery-scanner-modal');
-  if(modal) modal.style.display = 'flex';
-  setTimeout(function() {
+  // 方法1: 用瀏覽器原生 BarcodeDetector（iOS Safari 16.4+ / Chrome 83+）
+  if(typeof BarcodeDetector !== 'undefined') {
     try {
-      deliveryScanner = new Html5Qrcode('delivery-qr-reader', {
-        useBarCodeDetectorIfSupported: true,
-        verbose: false
-      });
-      var screenW = window.innerWidth || 360;
-      var boxW = Math.min(Math.floor(screenW * 0.7), 300);
-      var boxH = Math.floor(boxW * 0.5);
-      deliveryScanner.start(
-        { facingMode: 'environment' },
-        { fps: 15, qrbox: { width: boxW, height: boxH } },
-        function(decoded) {
-          deliveryScanner.stop().then(function(){
-            deliveryScanner.clear(); deliveryScanner = null;
-            var el = document.getElementById('delivery-no-' + deliveryTargetTaskId);
-            if(el) el.value = decoded.trim();
-            showToast('✅ 掃碼成功：' + decoded.trim(), 'green');
-            var m = document.getElementById('delivery-scanner-modal');
-            if(m) m.style.display = 'none';
-          }).catch(function(){
-            deliveryScanner = null;
-            var el = document.getElementById('delivery-no-' + deliveryTargetTaskId);
-            if(el) el.value = decoded.trim();
-            showToast('✅ 掃碼成功：' + decoded.trim(), 'green');
-            var m = document.getElementById('delivery-scanner-modal');
-            if(m) m.style.display = 'none';
-          });
-        },
-        function() {}
-      ).catch(function(err) {
-        showToast('無法開啟相機：' + (err.message||err), 'red');
-        closeDeliveryScanner();
-      });
-    } catch(e) {
-      showToast('掃描器初始化失敗', 'red');
-      closeDeliveryScanner();
+      var img = new Image();
+      img.src = URL.createObjectURL(file);
+      await new Promise(function(r){ img.onload = r; });
+      var detector = new BarcodeDetector({formats:['code_128','code_39','ean_13','ean_8','upc_a','qr_code','itf','codabar']});
+      var results = await detector.detect(img);
+      URL.revokeObjectURL(img.src);
+      if(results && results.length > 0) {
+        if(inputEl) inputEl.value = results[0].rawValue.trim();
+        showToast('✅ 辨識成功：' + results[0].rawValue.trim(), 'green');
+        fileInput.value = '';
+        return;
+      }
+    } catch(e) { console.log('BarcodeDetector failed:', e); }
+  }
+
+  // 方法2: 用 Html5Qrcode scanFile
+  try {
+    var tempId = 'temp-scan-' + Date.now();
+    var tempDiv = document.createElement('div');
+    tempDiv.id = tempId;
+    tempDiv.style.display = 'none';
+    document.body.appendChild(tempDiv);
+    var scanner = new Html5Qrcode(tempId, {verbose:false});
+    var result = await scanner.scanFileV2(file, false);
+    scanner.clear();
+    tempDiv.remove();
+    if(result && result.decodedText) {
+      if(inputEl) inputEl.value = result.decodedText.trim();
+      showToast('✅ 辨識成功：' + result.decodedText.trim(), 'green');
+      fileInput.value = '';
+      return;
     }
-  }, 500);
-}
+  } catch(e) { console.log('Html5Qrcode scanFile failed:', e); }
 
-function closeDeliveryScanner() {
-  if(deliveryScanner) {
-    try {
-      deliveryScanner.stop().then(function() {
-        deliveryScanner.clear();
-        deliveryScanner = null;
-      }).catch(function() { deliveryScanner = null; });
-    } catch(e) { deliveryScanner = null; }
-  }
-  var modal = document.getElementById('delivery-scanner-modal');
-  if(modal) modal.style.display = 'none';
+  // 都失敗 → 提示手動輸入
+  showToast('無法自動辨識，請手動輸入配送單號', 'orange');
+  fileInput.value = '';
 }
 
 // ── 包裝完成確認（含箱子、計費重量、雙幣運費、照片）──
@@ -4587,17 +4619,6 @@ setTimeout(function() {
 }, 15000);
 
 </script>
-<!-- ★ 配送單號條碼掃描器 -->
-<div id="delivery-scanner-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.9);flex-direction:column;align-items:center;justify-content:center">
-  <div style="width:100%;max-width:400px;padding:20px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <span style="font-size:16px;font-weight:700;color:white">📷 掃描配送單號條碼</span>
-      <button onclick="closeDeliveryScanner()" style="background:rgba(255,255,255,0.2);border:none;color:white;font-size:20px;width:36px;height:36px;border-radius:50%;cursor:pointer">✕</button>
-    </div>
-    <div id="delivery-qr-reader" style="width:100%;border-radius:12px;overflow:hidden"></div>
-    <div style="margin-top:12px;text-align:center;color:rgba(255,255,255,0.6);font-size:12px">對準條碼自動辨識</div>
-  </div>
-</div>
 
 </body>
 </html>
